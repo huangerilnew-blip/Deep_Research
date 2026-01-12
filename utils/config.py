@@ -24,6 +24,7 @@ class Config:
     # openai:调用gpt模型,qwen:调用阿里通义千问大模型,oneapi:调用oneapi方案支持的模型,ollama:调用本地开源大模型
     LLM_TYPE = "qwen"
     LLM_PLANNER="qwen"
+    LLM_EXECUTOR="qwen"
     PLANNER_EPOCH=3
     # API服务地址和端口
     HOST = "0.0.0.0"

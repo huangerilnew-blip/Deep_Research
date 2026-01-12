@@ -1,7 +1,7 @@
 import os
 import logging
 from concurrent_log_handler import ConcurrentRotatingFileHandler
-from typing import Callable
+from typing import Callable, List
 from langchain_core.tools import BaseTool, tool as create_tool
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt.interrupt import HumanInterruptConfig, HumanInterrupt
@@ -122,7 +122,7 @@ async def add_human_in_the_loop(
 
 
 # 获取工具列表 提供给第三方调用
-async def get_tools():
+async def get_tools()->list[BaseTool]:
     # 自定义工具 模拟酒店预定工具
     @tool("book_hotel", description="酒店预定工具")
     async def book_hotel(hotel_name: str):
@@ -176,3 +176,5 @@ async def get_tools():
 
     # 返回工具列表
     return tools
+
+## HITL + GET_TOOLS(里面定了工具：tools or mcp_client)
