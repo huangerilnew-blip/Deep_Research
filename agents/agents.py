@@ -141,8 +141,6 @@ class ExecutorAgent:
     def _chat_model_node(self,state:ExecutorState):
         self.tools_llm=self.chat_llm.bind_tools(self.tools)
         query = state["exector_messages"][0].content
-
-
         ## 这里引导llm循环并行调用工具
         try:
             json_queries = json.loads(query)  # {"tasks":[{"id": "T1", "query": "子问题1", "dep": []}]}

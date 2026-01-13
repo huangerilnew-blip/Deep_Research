@@ -29,3 +29,5 @@ class Config:
     # API服务地址和端口
     HOST = "0.0.0.0"
     PORT = 8001
+    EMAIL="huang.eril.new@gmail.com" ##pubmed 中最好提供邮箱，防止封id
+    DOC_SAVE_PATH="../downloads"

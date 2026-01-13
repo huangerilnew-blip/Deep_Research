@@ -1,5 +1,7 @@
 import os
 import logging
+
+import asyncio
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 from typing import Callable, List
 from langchain_core.tools import BaseTool, tool as create_tool
@@ -10,7 +12,7 @@ from langgraph.prebuilt.interrupt import HumanInterruptConfig, HumanInterrupt
 
 from langgraph.types import interrupt, Command
 from langchain_core.tools import tool
-from .config import Config
+from config import Config
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 
@@ -124,57 +126,36 @@ async def add_human_in_the_loop(
 # 获取工具列表 提供给第三方调用
 async def get_tools()->list[BaseTool]:
     # 自定义工具 模拟酒店预定工具
-    @tool("book_hotel", description="酒店预定工具")
-    async def book_hotel(hotel_name: str):
-        """
-       支持酒店预定的工具
-
-        Args:
-            hotel_name: 酒店名称
-
-        Returns:
-            工具的调用结果
-        """
-        return f"成功预定了在{hotel_name}的住宿。"
-
-    # 自定义工具 计算两个数的乘积的工具
-    @tool("multiply", description="计算两个数的乘积的工具")
-    async def multiply(a: float, b: float) -> float:
-        """
-       支持计算两个数的乘积的工具
-
-        Args:
-            a: 参数1
-            b: 参数2
-
-        Returns:
-            工具的调用结果
-        """
-        result = a * b
-        return f"{a}乘以{b}等于{result}。"
-
     # MCP Server工具 高德地图
     client = MultiServerMCPClient({
-        # 高德地图 MCP Server
-        # "amap-amap-sse": {
-        #     "url": "https://mcp.amap.com/sse?key="+os.getenv("AMAP_MAPS_API_KEY"),
-        #     "transport": "sse",
-        # },
-        "amap-maps-streamableHTTP": {
-            "url": "https://mcp.amap.com/mcp?key=" + os.getenv("AMAP_MAPS_API_KEY"),
-            "transport": "streamable_http"
+
+        # "amap-maps-streamableHTTP": {
+        #     "url": "https://mcp.amap.com/mcp?key=" + os.getenv("AMAP_MAPS_API_KEY"),
+        #     "transport": "streamable_http"
+        # }
+        "paper_search": {
+            "command": "python",
+            "args": ["-m", "paper_search_mcp.server"],
+            "cwd": r"/home/qinshan/paper-search-mcp",
+            "env": { "SEMANTIC_SCHOLAR_API_KEY":os.getenv("SMITHERY_API_KEY")},
+            "transport": "stdio"
         }
-    })
+            })
     # 从MCP Server中获取可提供使用的全部工具
     amap_tools = await client.get_tools()
     # 为工具添加人工审查
-    tools = [await add_human_in_the_loop(index) for index in amap_tools]
+    # tools = [await add_human_in_the_loop(index) for index in amap_tools]
 
-    # 追加自定义工具并添加人工审查
-    tools.append(await add_human_in_the_loop(book_hotel))
-    tools.append(multiply)
 
     # 返回工具列表
-    return tools
+    return amap_tools
 
 ## HITL + GET_TOOLS(里面定了工具：tools or mcp_client)
+if __name__ == '__main__':
+    tools=asyncio.run(get_tools())
+    for tool in tools:
+        print("-------------------------------------------------")
+        print(f"工具名称: {tool.name}")
+        print(f"工具描述: {tool.description}")
+    print("-------------------------------------------------")
+    print(f"一共有 {len(tools)} 个工具可用。")
