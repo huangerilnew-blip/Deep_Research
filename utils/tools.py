@@ -144,13 +144,13 @@ async def get_tools()->list[BaseTool]:
     # 从MCP Server中获取可提供使用的全部工具
     amap_tools = await client.get_tools()
     # 为工具添加人工审查
-    # tools = [await add_human_in_the_loop(index) for index in amap_tools]
+    # tool_pool = [await add_human_in_the_loop(index) for index in amap_tools]
 
 
     # 返回工具列表
     return amap_tools
 
-## HITL + GET_TOOLS(里面定了工具：tools or mcp_client)
+## HITL + GET_TOOLS(里面定了工具：tool_pool or mcp_client)
 if __name__ == '__main__':
     tools=asyncio.run(get_tools())
     for tool in tools:
