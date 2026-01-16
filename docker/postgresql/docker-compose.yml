@@ -5,7 +5,7 @@ services:
     image: postgres:15        # 指定具体版本
     container_name: postgres_db
     environment:
-      POSTGRES_USER: kevin
+      POSTGRES_USER: qinshan
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: postgres
       TZ: Asia/Shanghai       # 设置时区
