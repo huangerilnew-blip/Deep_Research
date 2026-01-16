@@ -9,18 +9,19 @@ SEC EDGAR 公司财务报告检索器
 
 使用 SEC 官方免费 API，无需 API Key。
 
-使用示例:
-    >>> import asyncio
-    >>> from sec_edgar import SECEdgarSearcher
-    >>> 
-    >>> async def main():
-    ...     searcher = SECEdgarSearcher()
-    ...     papers = await searcher.search("AAPL", limit=1)
-    ...     for paper in papers:
-    ...         print(f"{paper.title}")
-    ...     papers = await searcher.download(papers)
-    >>> 
-    >>> asyncio.run(main())
+使用示例::
+
+    import asyncio
+    from sec_edgar import SECEdgarSearcher
+    
+    async def main():
+        searcher = SECEdgarSearcher()
+        papers = await searcher.search("AAPL", limit=1)
+        for paper in papers:
+            print(f"{paper.title}")
+        papers = await searcher.download(papers)
+    
+    asyncio.run(main())
 
 Author: SEC EDGAR Searcher
 Version: 1.0.0
@@ -164,13 +165,13 @@ class SECEdgarSearcher:
 
     def _get_latest_10k_info(self, submissions: Dict) -> Optional[Dict]:
         """
-        从提交历史中获取最新 10-K 文件信息
+        从提交历史中获取最新年报文件信息（10-K 或 20-F）
         
         Args:
             submissions: 公司提交历史数据
             
         Returns:
-            Dict: {"accession_number": str, "filing_date": str, "primary_document": str}
+            Dict: {"accession_number": str, "filing_date": str, "primary_document": str, "form_type": str}
         """
         filings = submissions.get("filings", {}).get("recent", {})
         forms = filings.get("form", [])
@@ -178,25 +179,21 @@ class SECEdgarSearcher:
         filing_dates = filings.get("filingDate", [])
         primary_documents = filings.get("primaryDocument", [])
         
-        # 查找最新的 10-K
-        for i, form in enumerate(forms):
-            if form == "10-K":
-                return {
-                    "accession_number": accession_numbers[i].replace("-", ""),
-                    "accession_number_raw": accession_numbers[i],
-                    "filing_date": filing_dates[i],
-                    "primary_document": primary_documents[i]
-                }
+        # 支持的年报类型，按优先级排序
+        # 10-K: 美国公司年报
+        # 20-F: 外国公司年报（中概股等）
+        annual_forms = ["10-K", "20-F", "10-K/A", "20-F/A"]
         
-        # 如果没有 10-K，尝试 10-K/A（修正版）
-        for i, form in enumerate(forms):
-            if form == "10-K/A":
-                return {
-                    "accession_number": accession_numbers[i].replace("-", ""),
-                    "accession_number_raw": accession_numbers[i],
-                    "filing_date": filing_dates[i],
-                    "primary_document": primary_documents[i]
-                }
+        for target_form in annual_forms:
+            for i, form in enumerate(forms):
+                if form == target_form:
+                    return {
+                        "accession_number": accession_numbers[i].replace("-", ""),
+                        "accession_number_raw": accession_numbers[i],
+                        "filing_date": filing_dates[i],
+                        "primary_document": primary_documents[i],
+                        "form_type": form
+                    }
         
         return None
 
@@ -260,6 +257,36 @@ class SECEdgarSearcher:
         # 清理多余空白
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
+
+    def _extract_business_description(self, html: str) -> str:
+        """
+        提取企业介绍章节 (Item 1 - Business)
+        
+        Args:
+            html: 10-K/20-F HTML 内容
+            
+        Returns:
+            str: 企业介绍文本
+        """
+        # 多种模式匹配 Item 1 Business
+        patterns = [
+            # 模式1: Item 1. Business 到 Item 1A
+            r'(?:ITEM\s*1\.?\s*[-–—]?\s*BUSINESS)(.*?)(?:ITEM\s*1A\.?\s*[-–—]?\s*RISK)',
+            # 模式2: Item 1 到 Item 1A（简化）
+            r'(?:ITEM\s*1[.\s])(.*?)(?:ITEM\s*1A[.\s])',
+            # 模式3: 20-F 格式 - Item 4. Information on the Company
+            r'(?:ITEM\s*4\.?\s*[-–—]?\s*INFORMATION\s*ON\s*THE\s*COMPANY)(.*?)(?:ITEM\s*4A\.?\s*[-–—]?\s*UNRESOLVED|ITEM\s*5\.)',
+            # 模式4: Business 标题到下一个 Item
+            r'(?:>BUSINESS<)(.*?)(?:>ITEM\s*\d)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
+            if match:
+                content = match.group(1)
+                return self._clean_html(content)
+        
+        return ""
 
     def _extract_risk_factors(self, html: str) -> str:
         """
@@ -481,6 +508,7 @@ class SECEdgarSearcher:
         self,
         company_info: Dict,
         filing_info: Dict,
+        business_description: str,
         risk_factors: str,
         mda: str,
         financial_snapshot: Dict
@@ -491,6 +519,7 @@ class SECEdgarSearcher:
         Args:
             company_info: 公司信息 {cik, name, ticker}
             filing_info: 文件信息 {accession_number, filing_date, ...}
+            business_description: 企业介绍文本
             risk_factors: 风险因素文本
             mda: MD&A 文本
             financial_snapshot: 财务快照
@@ -499,10 +528,13 @@ class SECEdgarSearcher:
             Paper: 映射后的 Paper 对象
         """
         # 生成摘要（精简版，适合大模型）
+        business_summary = self._summarize_text(business_description, 1500)
         risk_summary = self._summarize_text(risk_factors, 1500)
         mda_summary = self._summarize_text(mda, 1500)
         
         abstract_parts = []
+        if business_summary:
+            abstract_parts.append(f"【企业介绍】{business_summary}")
         if risk_summary:
             abstract_parts.append(f"【风险因素摘要】{risk_summary}")
         if mda_summary:
@@ -529,8 +561,9 @@ class SECEdgarSearcher:
         extra = {
             "cik": company_info.get("cik", ""),
             "ticker": company_info.get("ticker", ""),
-            "form_type": "10-K",
+            "form_type": filing_info.get("form_type", "10-K"),
             "fiscal_year": filing_date[:4] if filing_date else "",
+            "business_description": business_description,
             "risk_factors": risk_factors,
             "mda": mda,
             "financial_snapshot": financial_snapshot
@@ -588,19 +621,22 @@ class SECEdgarSearcher:
             # 3. 获取最新 10-K 信息
             filing_info = self._get_latest_10k_info(submissions)
             if not filing_info:
-                print(f"未找到 10-K 文件: {company_info['name']}")
+                print(f"未找到年报文件 (10-K/20-F): {company_info['name']}")
                 return []
             
-            print(f"找到 10-K 文件: {filing_info['accession_number_raw']} ({filing_info['filing_date']})")
+            print(f"找到 {filing_info.get('form_type', '10-K')} 文件: {filing_info['accession_number_raw']} ({filing_info['filing_date']})")
             
-            # 4. 下载并解析 10-K HTML
+            # 4. 下载并解析年报 HTML
             html = await self._fetch_filing_html(client, cik, filing_info)
             
+            business_description = ""
             risk_factors = ""
             mda = ""
             if html:
+                business_description = self._extract_business_description(html)
                 risk_factors = self._extract_risk_factors(html)
                 mda = self._extract_mda(html)
+                print(f"提取企业介绍: {len(business_description)} 字符")
                 print(f"提取风险因素: {len(risk_factors)} 字符")
                 print(f"提取 MD&A: {len(mda)} 字符")
             
@@ -613,6 +649,7 @@ class SECEdgarSearcher:
             paper = self._map_to_paper(
                 company_info,
                 filing_info,
+                business_description,
                 risk_factors,
                 mda,
                 financial_snapshot
@@ -708,14 +745,21 @@ class SECEdgarSearcher:
             lines.append(f"- **报告期**: {snapshot.get('period')}")
         lines.append("")
         
+        # 企业介绍
+        lines.append("## 企业介绍 (Item 1 - Business)")
+        lines.append("")
+        business_description = extra.get("business_description", "")
+        if business_description:
+            lines.append(business_description)
+        else:
+            lines.append("暂无企业介绍信息")
+        lines.append("")
+        
         # 风险因素
         lines.append("## 风险因素 (Item 1A)")
         lines.append("")
         risk_factors = extra.get("risk_factors", "")
         if risk_factors:
-            # 限制长度，避免文件过大
-            if len(risk_factors) > 10000:
-                risk_factors = risk_factors[:10000] + "\n\n... (内容已截断)"
             lines.append(risk_factors)
         else:
             lines.append("暂无风险因素信息")
@@ -726,8 +770,6 @@ class SECEdgarSearcher:
         lines.append("")
         mda = extra.get("mda", "")
         if mda:
-            if len(mda) > 10000:
-                mda = mda[:10000] + "\n\n... (内容已截断)"
             lines.append(mda)
         else:
             lines.append("暂无管理层讨论与分析信息")
@@ -876,6 +918,7 @@ async def main():
                 "ticker": "AAPL",
                 "form_type": "10-K",
                 "fiscal_year": "2024",
+                "business_description": "Apple Inc. 设计、制造和销售智能手机、个人电脑、平板电脑、可穿戴设备和配件，并销售各种相关服务。公司的产品包括 iPhone、Mac、iPad、Apple Watch 和 AirPods 等。公司的服务包括 App Store、Apple Music、Apple TV+、iCloud 等数字内容和订阅服务。公司在全球范围内通过零售店、在线商店和第三方渠道销售产品。",
                 "risk_factors": "公司面临以下主要风险：\n\n1. 市场竞争风险：智能手机、平板电脑和个人电脑市场竞争激烈...\n\n2. 供应链风险：公司依赖全球供应链，可能受到地缘政治、自然灾害等因素影响...\n\n3. 技术变革风险：技术快速变化可能导致产品过时...",
                 "mda": "管理层讨论与分析：\n\n本财年公司总收入达到 3943 亿美元，同比增长 2%。服务业务收入创历史新高，达到 850 亿美元。iPhone 收入保持稳定，Mac 和 iPad 业务有所下滑。\n\n展望未来，公司将继续投资人工智能和增强现实技术...",
                 "financial_snapshot": {
@@ -893,7 +936,7 @@ async def main():
         print("\n【演示】使用模拟数据导出 Markdown")
         print("-" * 40)
         
-        downloaded = await searcher.download(demo_paper, save_path="./downloads")
+        downloaded = await searcher.download(demo_paper)
         
         for paper in downloaded:
             saved_path = paper.extra.get("saved_path", "")
@@ -913,7 +956,7 @@ async def main():
     print("\n【示例】搜索公司并导出财务报告")
     print("-" * 40)
     
-    query = "AAPL"  # 可以是股票代码或公司名称
+    query = ("BEKE")  # 可以是股票代码或公司名称
     print(f"搜索: {query}")
     
     papers = await searcher.search(query, limit=1)
@@ -936,7 +979,7 @@ async def main():
         
         # 导出为 Markdown
         print(f"\n导出为 Markdown...")
-        downloaded = await searcher.download(papers, save_path="./downloads")
+        downloaded = await searcher.download(papers)
         
         for p in downloaded:
             saved_path = p.extra.get("saved_path", "")

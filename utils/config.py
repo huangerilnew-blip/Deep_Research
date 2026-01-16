@@ -30,4 +30,18 @@ class Config:
     HOST = "0.0.0.0"
     PORT = 8001
     EMAIL="huang.eril.new@gmail.com" ##pubmed 中最好提供邮箱，防止封id
-    DOC_SAVE_PATH="../downloads"
+
+    # 向量存储和文档路径配置
+    DOC_SAVE_PATH="../../doc/downloads" # 网站下载的文档存储路径
+    VECTOR_STORE_PATH="../vector_storage" # 向量存储路径
+    VECTTOR_BASE_COLLECTION_NAME="base_collection" #基础向量集合名称
+    VECTTOR_BASEDATA_PATH="../doc/crunchbase_data" #基础数据路径
+    VECTOR_DIM=1024 #向量维度
+    BASEDATA_RESTRUCTURE_PATH="../doc/crunchbase_data/restructure_data/restructure_company_info.json" #清洗与重构后的基础数据路径
+    TOP_K=5 #向量检索top_k
+    SEARCH_SIZE=10 #文献检索返回数量
+    TAVILY_NUM=3 #Tavily文献检索返回数量
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    WIKI_NUM=3 #wiki检索返回数量
+    WIKI_LANGUAGE="en" #wiki检索语言版本
+    SEC_EDGAR_USER_AGENT="Trina Solar,m6qdum90f@zzzz.lingeringp.com"

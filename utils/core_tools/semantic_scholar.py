@@ -9,21 +9,6 @@ Semantic Scholar 是由 Allen Institute for AI 开发的免费学术搜索引擎
 （无 Key 时约 100 请求/5分钟，有 Key 时约 1 请求/秒）。
 
 使用示例:
-    >>> import asyncio
-    >>> from semantic_scholar import SemanticScholarSearcher
-    >>> 
-    >>> async def main():
-    ...     searcher = SemanticScholarSearcher()
-    ...     # 检索论文
-    ...     papers = await searcher.search("machine learning", limit=5)
-    ...     for paper in papers:
-    ...         print(f"{paper.title} - {paper.doi}")
-    ...     # 下载全文
-    ...     papers = await searcher.download(papers)
-    ...     for paper in papers:
-    ...         print(f"Saved to: {paper.extra.get('saved_path')}")
-    >>> 
-    >>> asyncio.run(main())
 
 主要功能:
     - search: 根据关键词检索 Semantic Scholar 文献，返回 Paper 对象列表
@@ -37,11 +22,11 @@ import os
 import httpx
 from typing import List, Union, Optional
 from datetime import datetime
-
+from dotenv import load_dotenv
 from paper import Paper
 from config import Config
-
-
+import asyncio
+load_dotenv()
 class SemanticScholarSearcher:
     """
     Semantic Scholar 文献检索器类
@@ -55,15 +40,19 @@ class SemanticScholarSearcher:
         _fields: API 请求字段列表
     """
     
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, size: int = None):
         """
         初始化 SemanticScholarSearcher
         
         Args:
             api_key: 可选的 API Key，用于获得更高的请求限制。
+                     默认从环境变量 SEMANTIC_API_KEY 读取。
                      无 Key 时约 100 请求/5分钟，有 Key 时约 1 请求/秒。
+            size: 检索返回数量，默认使用 Config.SEARCH_SIZE
         """
-        self.api_key = api_key
+        # 优先使用传入的 api_key，否则从环境变量读取
+        self.api_key = api_key or os.getenv("SEMANTIC_API_KEY")
+        self.size = size or Config.SEARCH_SIZE
         self.base_url = "https://api.semanticscholar.org/graph/v1"
         
         # 设置 HTTP 请求头
@@ -277,74 +266,184 @@ class SemanticScholarSearcher:
             extra=extra
         )
 
+    def _get_browser_headers(self) -> dict:
+        """获取模拟浏览器的请求头"""
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/pdf,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+    def _is_valid_pdf(self, content: bytes) -> bool:
+        """检查内容是否为有效 PDF"""
+        return len(content) > 10000 and content[:4] == b'%PDF'
+
+    def _get_alternative_pdf_urls(self, paper: Paper) -> List[str]:
+        """
+        获取论文的所有可能的 PDF 下载链接
+        
+        Args:
+            paper: Paper 对象
+            
+        Returns:
+            List[str]: PDF 链接列表，按优先级排序
+        """
+        urls = []
+        
+        # 1. 原始 openAccessPdf URL
+        if paper.pdf_url:
+            urls.append(paper.pdf_url)
+        
+        # 2. 从 extra 中获取 externalIds
+        external_ids = {}
+        if paper.extra:
+            external_ids = paper.extra.get("externalIds", {}) or {}
+        
+        # 3. ArXiv 直链（最可靠的开放获取源）
+        arxiv_id = external_ids.get("ArXiv")
+        if arxiv_id:
+            urls.append(f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+        
+        # 4. 从 DOI 尝试获取（通过 Unpaywall）
+        doi = paper.doi or external_ids.get("DOI")
+        if doi:
+            # Unpaywall 会在下载时动态查询
+            pass
+        
+        # 5. PubMed Central
+        pmc_id = external_ids.get("PubMedCentral")
+        if pmc_id:
+            urls.append(f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/")
+        
+        return urls
+
+    async def _get_unpaywall_pdf_url(self, client: httpx.AsyncClient, doi: str) -> Optional[str]:
+        """通过 Unpaywall API 获取 PDF 链接"""
+        if not doi:
+            return None
+        
+        try:
+            url = f"https://api.unpaywall.org/v2/{doi}"
+            params = {"email": Config.EMAIL}
+            
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                best_oa = data.get("best_oa_location")
+                if best_oa and best_oa.get("url_for_pdf"):
+                    return best_oa["url_for_pdf"]
+                
+                for loc in data.get("oa_locations", []):
+                    if loc.get("url_for_pdf"):
+                        return loc["url_for_pdf"]
+        except Exception:
+            pass
+        
+        return None
+
+    async def _try_download_url(self, client: httpx.AsyncClient, url: str, file_path: str) -> bool:
+        """尝试从单个 URL 下载文件"""
+        try:
+            headers = self._get_browser_headers()
+            response = await client.get(url, headers=headers, follow_redirects=True, timeout=15.0)
+            
+            if response.status_code != 200:
+                return False
+            
+            content = response.content
+            if not self._is_valid_pdf(content):
+                return False
+            
+            with open(file_path, "wb") as f:
+                f.write(content)
+            
+            return True
+        except Exception:
+            return False
+
     async def _download_file(
         self, 
         client: httpx.AsyncClient, 
         paper: Paper, 
-        save_path: str
+        save_path: str,
+        max_retries: int = 2
     ) -> str:
         """
-        下载单个文件
+        下载单个文件，带多源重试机制
         
         Args:
             client: HTTP 客户端
             paper: Paper 对象
             save_path: 保存目录
+            max_retries: 每个 URL 的最大重试次数
             
         Returns:
             str: 文件保存路径或 "No fulltext available"
         """
+
+        
         # 检查 pdf_url 是否为空
         if not paper.pdf_url:
             return "No fulltext available"
         
-        try:
-            # 发送 GET 请求下载文件
-            response = await client.get(paper.pdf_url, follow_redirects=True)
-            response.raise_for_status()
-            
-            # 生成文件名：使用 paper_id 或 doi 作为文件名
-            if paper.paper_id:
-                filename = f"{paper.paper_id}.pdf"
-            elif paper.doi:
-                # DOI 中的 / 替换为 _
-                safe_doi = paper.doi.replace("/", "_")
-                filename = f"{safe_doi}.pdf"
-            else:
-                # 使用标题的前 50 个字符作为文件名
-                safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in paper.title[:50])
-                filename = f"{safe_title.strip()}.pdf"
-            
-            # 构建完整的文件路径
-            file_path = os.path.join(save_path, filename)
-            
-            # 保存文件
-            with open(file_path, "wb") as f:
-                f.write(response.content)
-            
+        # 生成文件名（优先使用 DOI）
+        if paper.doi:
+            safe_doi = paper.doi.replace("/", "_")
+            filename = f"{safe_doi}.pdf"
+        elif paper.paper_id:
+            filename = f"{paper.paper_id}.pdf"
+        else:
+            safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in paper.title[:50])
+            filename = f"{safe_title.strip()}.pdf"
+        
+        file_path = os.path.join(save_path, filename)
+        
+        # 如果文件已存在，直接返回
+        if os.path.exists(file_path):
             return file_path
+        
+        # 收集所有可能的下载链接
+        urls_to_try = self._get_alternative_pdf_urls(paper)
+        
+        # 尝试从 Unpaywall 获取备用链接
+        doi = paper.doi
+        if not doi and paper.extra:
+            doi = paper.extra.get("externalIds", {}).get("DOI")
+        
+        unpaywall_url = await self._get_unpaywall_pdf_url(client, doi)
+        if unpaywall_url and unpaywall_url not in urls_to_try:
+            urls_to_try.insert(1, unpaywall_url)
+        
+        tried_urls = set()
+        
+        for url in urls_to_try:
+            if url in tried_urls:
+                continue
+            tried_urls.add(url)
             
-        except httpx.HTTPStatusError as e:
-            print(f"下载失败 (HTTP {e.response.status_code}): {paper.pdf_url}")
-            return "No fulltext available"
-        except httpx.RequestError as e:
-            print(f"网络请求错误: {e}")
-            return "No fulltext available"
-        except Exception as e:
-            print(f"下载文件失败: {e}")
-            return "No fulltext available"
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    await asyncio.sleep(1)
+                
+                if await self._try_download_url(client, url, file_path):
+                    return file_path
+        
+        return "No fulltext available"
 
-    async def search(self, query: str, limit: int = 5) -> List[Paper]:
+    async def search(self, query: str, limit: int = None) -> List[Paper]:
         """
         根据查询关键词检索 Semantic Scholar 文献
         
         Args:
             query: 检索关键词
-            limit: 最大返回数量，默认 5（API 最大支持 100）
+            limit: 最大返回数量，默认使用 self.size（API 最大支持 100）
             
         Returns:
             List[Paper]: 符合条件的 Paper 对象列表，包含完整的元信息
         """
+        if limit is None:
+            limit = self.size
+        
         papers = []
         
         # 创建 httpx.AsyncClient
@@ -393,8 +492,13 @@ class SemanticScholarSearcher:
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         
+        # 统计有 PDF 链接的论文数量
+        papers_with_pdf = [p for p in paper_list if p.pdf_url]
+        print(f"共 {len(papers_with_pdf)} 篇论文待下载")
+        
+        success_count = 0
         # 创建 httpx.AsyncClient
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             # 遍历 Paper 列表调用 _download_file
             for paper in paper_list:
                 saved_path = await self._download_file(client, paper, save_path)
@@ -402,6 +506,12 @@ class SemanticScholarSearcher:
                 if paper.extra is None:
                     paper.extra = {}
                 paper.extra["saved_path"] = saved_path
+                
+                if saved_path and saved_path != "No fulltext available":
+                    print(f"已保存: {saved_path}")
+                    success_count += 1
+        
+        print(f"下载完成: {success_count}/{len(papers_with_pdf)}")
         
         # 返回更新后的 Paper 列表
         return paper_list
@@ -409,129 +519,39 @@ class SemanticScholarSearcher:
 
 async def main():
     """
-    使用示例：展示 search 和 download 方法的独立使用方式
-    
-    本示例演示了 SemanticScholarSearcher 的两个核心功能：
-    1. search: 根据关键词检索 Semantic Scholar 文献
-    2. download: 根据 Paper 对象中的 pdf_url 下载全文文档
-    
-    两个方法可以独立使用，也可以组合使用。
+    使用示例：展示 search 和 download 方法
     """
-    import asyncio
-    
-    # 创建检索器实例
-    # 可选：传入 API Key 以获得更高的请求限制
-    # searcher = SemanticScholarSearcher(api_key="your-api-key")
+    # 创建检索器实例（自动使用环境变量中的 SEMANTIC_API_KEY）
     searcher = SemanticScholarSearcher()
     
     print("=" * 60)
-    print("Semantic Scholar 文献检索器使用示例")
+    print("Semantic Scholar 文献检索器")
     print("=" * 60)
     
-    # ========== 示例 1: 单独使用 search 方法 ==========
-    print("\n【示例 1】单独使用 search 方法检索文献")
-    print("-" * 40)
+    # 搜索文献
+    query = "互联网+医疗 健康大数据"
+    print(f"\n检索关键词: {query}")
     
-    query = "deep learning natural language processing"
-    limit = 3
-    
-    print(f"检索关键词: {query}")
-    print(f"最大返回数量: {limit}")
-    print()
-    
-    papers = await searcher.search(query, limit=limit)
+    papers = await searcher.search(query)
     
     if papers:
-        print(f"共检索到 {len(papers)} 篇论文:\n")
+        print(f"检索到 {len(papers)} 篇论文:\n")
         for i, paper in enumerate(papers, 1):
             print(f"[{i}] {paper.title}")
             print(f"    作者: {', '.join(paper.authors[:3])}{'...' if len(paper.authors) > 3 else ''}")
             print(f"    DOI: {paper.doi or '无'}")
-            print(f"    发布日期: {paper.published_date.strftime('%Y-%m-%d') if paper.published_date else '未知'}")
-            print(f"    引用数: {paper.citations}")
             print(f"    PDF链接: {'有' if paper.pdf_url else '无'}")
-            print(f"    来源: {paper.source}")
             print()
+        
+        # 下载有 PDF 链接的论文
+        papers_with_pdf = [p for p in papers if p.pdf_url]
+        if papers_with_pdf:
+            await searcher.download(papers_with_pdf)
     else:
         print("未检索到相关论文")
     
-    # ========== 示例 2: 单独使用 download 方法 ==========
-    print("\n【示例 2】单独使用 download 方法下载文档")
-    print("-" * 40)
-    
-    # 筛选有 PDF 链接的论文
-    papers_with_pdf = [p for p in papers if p.pdf_url]
-    
-    if papers_with_pdf:
-        print(f"有 {len(papers_with_pdf)} 篇论文提供 PDF 下载")
-        print(f"保存路径: {Config.DOC_SAVE_PATH}")
-        print()
-        
-        # 下载文档（这里只下载第一篇作为示例）
-        downloaded_papers = await searcher.download(papers_with_pdf[:1])
-        
-        for paper in downloaded_papers:
-            saved_path = paper.extra.get("saved_path", "")
-            if saved_path and saved_path != "No fulltext available":
-                print(f"✓ 下载成功: {paper.title[:50]}...")
-                print(f"  保存位置: {saved_path}")
-            else:
-                print(f"✗ 下载失败: {paper.title[:50]}...")
-                print(f"  状态: {saved_path}")
-    else:
-        print("没有可下载的 PDF 文档")
-    
-    # ========== 示例 3: 组合使用 search 和 download ==========
-    print("\n【示例 3】组合使用 search 和 download")
-    print("-" * 40)
-    
-    # 检索并下载一步完成
-    query2 = "transformer attention mechanism"
-    print(f"检索关键词: {query2}")
-    
-    papers2 = await searcher.search(query2, limit=2)
-    
-    if papers2:
-        print(f"检索到 {len(papers2)} 篇论文，开始下载...")
-        
-        # 下载所有论文
-        downloaded_papers2 = await searcher.download(papers2)
-        
-        print("\n下载结果:")
-        for paper in downloaded_papers2:
-            saved_path = paper.extra.get("saved_path", "")
-            status = "✓ 成功" if saved_path and saved_path != "No fulltext available" else "✗ 无全文"
-            print(f"  {status}: {paper.title[:40]}...")
-    
-    # ========== 示例 4: 查看论文详细信息 ==========
-    print("\n【示例 4】查看论文详细元数据")
-    print("-" * 40)
-    
-    if papers:
-        paper = papers[0]
-        print(f"论文标题: {paper.title}")
-        print(f"Paper ID: {paper.paper_id}")
-        print(f"DOI: {paper.doi or '无'}")
-        print(f"作者: {', '.join(paper.authors)}")
-        print(f"摘要: {paper.abstract[:200] + '...' if paper.abstract and len(paper.abstract) > 200 else paper.abstract or '无'}")
-        print(f"发布日期: {paper.published_date}")
-        print(f"学科分类: {', '.join(paper.categories) if paper.categories else '无'}")
-        print(f"引用数: {paper.citations}")
-        print(f"参考文献数: {paper.references[0] if paper.references else '0'}")
-        print(f"PDF链接: {paper.pdf_url or '无'}")
-        print(f"页面链接: {paper.url}")
-        
-        # 显示额外元数据
-        if paper.extra:
-            print("\n额外元数据:")
-            print(f"  期刊/会议: {paper.extra.get('venue', '无')}")
-            print(f"  年份: {paper.extra.get('year', '未知')}")
-            print(f"  开放获取: {'是' if paper.extra.get('isOpenAccess') else '否'}")
-            print(f"  影响力引用数: {paper.extra.get('influentialCitationCount', 0)}")
-            print(f"  Corpus ID: {paper.extra.get('corpusId', '无')}")
-    
     print("\n" + "=" * 60)
-    print("示例执行完成")
+    print("完成")
     print("=" * 60)
 
 

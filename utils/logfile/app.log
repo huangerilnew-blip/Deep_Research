@@ -1,0 +1,139 @@
+2026-01-15 15:54:57,805 - __main__ - ERROR - 构建基础向量存储失败: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+2026-01-15 16:17:14,775 - __main__ - ERROR - 构建基础向量存储失败: Expecting value: line 2 column 1 (char 2)
+2026-01-15 16:22:27,999 - __main__ - ERROR - 构建基础向量存储失败: list index out of range
+2026-01-15 16:23:47,140 - __main__ - ERROR - 构建基础向量存储失败: list index out of range
+2026-01-15 16:25:05,039 - __main__ - ERROR - 构建基础向量存储失败: 1 validation error for MediaResource
+text
+  Input should be a valid string [type=string_type, input_value={'融资公告日期': '2...an, '融资状态': nan}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-15 17:06:50,311 - __main__ - ERROR - 构建基础向量存储失败: 25 validation errors for EmbeddingEndEvent
+embeddings.0
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.1
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.2
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.3
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.4
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.5
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.6
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.7
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.8
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.9
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.10
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.11
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.12
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.13
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.14
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.15
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.16
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.17
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.18
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.19
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.20
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.21
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.22
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.23
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+embeddings.24
+  Input should be a valid list [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/list_type
+2026-01-15 17:44:56,984 - __main__ - ERROR - 构建基础向量存储失败: 
+******
+Could not load OpenAI embedding model. If you intended to use OpenAI, please check your OPENAI_API_KEY.
+Original error:
+No API key found for OpenAI.
+Please set either the OPENAI_API_KEY environment variable or openai.api_key prior to initialization.
+API keys can be found or created at https://platform.openai.com/account/api-keys
+
+Consider using embed_model='local'.
+Visit our documentation for more embedding options: https://developers.llamaindex.ai/python/framework/module_guides/models/embeddings/
+******
+2026-01-15 17:45:25,791 - __main__ - ERROR - 构建基础向量存储失败: 
+******
+Could not load OpenAI embedding model. If you intended to use OpenAI, please check your OPENAI_API_KEY.
+Original error:
+No API key found for OpenAI.
+Please set either the OPENAI_API_KEY environment variable or openai.api_key prior to initialization.
+API keys can be found or created at https://platform.openai.com/account/api-keys
+
+Consider using embed_model='local'.
+Visit our documentation for more embedding options: https://developers.llamaindex.ai/python/framework/module_guides/models/embeddings/
+******
+2026-01-15 17:45:30,733 - __main__ - ERROR - 构建基础向量存储失败: 
+******
+Could not load OpenAI embedding model. If you intended to use OpenAI, please check your OPENAI_API_KEY.
+Original error:
+No API key found for OpenAI.
+Please set either the OPENAI_API_KEY environment variable or openai.api_key prior to initialization.
+API keys can be found or created at https://platform.openai.com/account/api-keys
+
+Consider using embed_model='local'.
+Visit our documentation for more embedding options: https://developers.llamaindex.ai/python/framework/module_guides/models/embeddings/
+******
+2026-01-15 17:45:57,331 - __main__ - ERROR - 构建基础向量存储失败: 
+******
+Could not load OpenAI embedding model. If you intended to use OpenAI, please check your OPENAI_API_KEY.
+Original error:
+No API key found for OpenAI.
+Please set either the OPENAI_API_KEY environment variable or openai.api_key prior to initialization.
+API keys can be found or created at https://platform.openai.com/account/api-keys
+
+Consider using embed_model='local'.
+Visit our documentation for more embedding options: https://developers.llamaindex.ai/python/framework/module_guides/models/embeddings/
+******
+2026-01-15 17:53:52,141 - __main__ - ERROR - 构建基础向量存储失败: 
+******
+Could not load OpenAI embedding model. If you intended to use OpenAI, please check your OPENAI_API_KEY.
+Original error:
+No API key found for OpenAI.
+Please set either the OPENAI_API_KEY environment variable or openai.api_key prior to initialization.
+API keys can be found or created at https://platform.openai.com/account/api-keys
+
+Consider using embed_model='local'.
+Visit our documentation for more embedding options: https://developers.llamaindex.ai/python/framework/module_guides/models/embeddings/
+******

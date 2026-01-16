@@ -1,0 +1,29 @@
+[
+  {
+    "paper_id": "514aff8beb4ca08e",
+    "title": "Explore the Applications of AI in Various Medical Domains, Such as ...",
+    "url": "https://seriesscience.com/artificial-intelligence-healthcare/",
+    "published_date": "2026-01-16",
+    "abstract": "This captivating literature review explores AI's multifaceted applications, illuminating its potential to streamline healthcare management and surgical",
+    "score": 0.7825466,
+    "source": "tavily"
+  },
+  {
+    "paper_id": "9345aca10effcb42",
+    "title": "Applications of Artificial Intelligence in Medicine",
+    "url": "https://www.xiahepublishing.com/2472-0712/ERHM-2023-00048",
+    "published_date": "2026-01-16",
+    "abstract": "However, sometimes the notification also increases anxiety levels when patients are unable to regulate their glucose levels.28;) Albeit with limited applications, AI tools are seen in nephrology where they can predict the decline of glomerular filtration rates in patients with polycystic kidney disease,29;) and provide risk alerts for progressive IgA nephropathy.30;) AI tools also have wide-ranging applications in the clinical setting of gastroenterology where the use of convolutional neural networks and other deep learning models can process endoscopy and ultrasound images to locate abnormalities.31;) AI tools can diagnose diseases and predict the outcomes, which helps physicians accelerate the treatment process for diseases such as gastroesophageal reflux disease,32;) atrophic gastritis,33;) gastrointestinal hemorrhage,34;) esophageal cancer,35;) Ulcerative colitis,36;) metastasis in colorectal cancer37;) and epidermoid carcinoma.38;) In 2018, the FDA approved “Embrace” a wearable device that can detect generalized epilepsy seizures and alert physicians and caregivers with the necessary information and patients’ locations.39;) Wearable sensors are also used to assess gait, posture, and tremors in patients with multiple sclerosis, Parkinson’s disease, Parkinsonism, and Huntington’s disease.40;) One FDA-approved AI-based algorithm can diagnose cancer in computational histopathology with great accuracy.",
+    "score": 0.76002824,
+    "source": "tavily"
+  },
+  {
+    "paper_id": "92c1bc8b15dc4686",
+    "title": "AI in Medicine | NEJM",
+    "url": "https://www.nejm.org/ai-in-medicine",
+    "published_date": "2026-01-16",
+    "abstract": "AI in Medicine explores the history and vast potential of artificial intelligence and machine learning across all areas of health care.",
+    "score": 0.69795954,
+    "source": "tavily"
+  }
+]
