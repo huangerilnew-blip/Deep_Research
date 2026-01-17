@@ -241,8 +241,18 @@ class WikipediaSearcher:
 
         
         for paper in paper_list:
-            markdown_content = self._generate_markdown(paper)
             filename = f"wiki_{paper.paper_id}.md"
+            file_path = os.path.join(save_path, filename)
+            
+            # 检查文件是否已存在
+            if os.path.exists(file_path):
+                print(f"文件已存在，跳过下载: {paper.title} -> {file_path}")
+                if paper.extra is None:
+                    paper.extra = {}
+                paper.extra["saved_path"] = file_path
+                continue
+            
+            markdown_content = self._generate_markdown(paper)
             saved_path = self._save_file(markdown_content, save_path, filename)
             
             if paper.extra is None:

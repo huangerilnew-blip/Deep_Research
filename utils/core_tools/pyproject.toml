@@ -1,0 +1,26 @@
+[project]
+name = "paper-search-mcp-server"
+version = "0.1.0"
+description = "MCP Server for paper search tools (OpenAlex, Semantic Scholar, Wikipedia, Tavily, SEC EDGAR, AkShare)"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=0.1.0",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_backend"
+
+[tool.setuptools]
+packages = ["paper_search_mcp"]

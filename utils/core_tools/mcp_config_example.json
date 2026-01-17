@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "paper-search": {
+      "command": "python",
+      "args": ["-m", "mcp_server"],
+      "cwd": "/absolute/path/to/utils/core_tools",
+      "env": {
+        "TAVILY_API_KEY": "your_tavily_api_key_here",
+        "SEMANTIC_SCHOLAR_API_KEY": "your_semantic_scholar_api_key_here",
+        "OPENAI_API_KEY": "your_openai_api_key_here"
+      },
+      "transport": "stdio",
+      "disabled": false,
+      "autoApprove": [
+        "wikipedia_search",
+        "openalex_search",
+        "semantic_scholar_search",
+        "tavily_search"
+      ]
+    }
+  }
+}

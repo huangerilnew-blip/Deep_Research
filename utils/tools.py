@@ -124,38 +124,85 @@ async def add_human_in_the_loop(
 
 
 # 获取工具列表 提供给第三方调用
-async def get_tools()->list[BaseTool]:
-    # 自定义工具 模拟酒店预定工具
-    # MCP Server工具 高德地图
+async def get_tools(tool_type: str = "all") -> list[BaseTool]:
+    """
+    获取工具列表
+    
+    Args:
+        tool_type: 工具类型
+            - "all": 返回所有工具
+            - "search": 只返回搜索工具
+            - "download": 只返回下载工具
+    
+    Returns:
+        list[BaseTool]: 工具列表
+    """
+    # MCP Server工具 - Paper Search
     client = MultiServerMCPClient({
-
-        # "amap-maps-streamableHTTP": {
-        #     "url": "https://mcp.amap.com/mcp?key=" + os.getenv("AMAP_MAPS_API_KEY"),
-        #     "transport": "streamable_http"
-        # }
-        "paper_search": {
+        "paper-search": {
             "command": "python",
-            "args": ["-m", "paper_search_mcp.server"],
-            "cwd": r"/home/qinshan/paper-search-mcp",
-            "env": { "SEMANTIC_SCHOLAR_API_KEY":os.getenv("SMITHERY_API_KEY")},
+            "args": ["-m", "mcp_server"],
+            "cwd": os.path.join(os.path.dirname(__file__), "core_tools"),
+            "env": {
+                "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY"),
+                "SEMANTIC_SCHOLAR_API_KEY": os.getenv("SEMANTIC_SCHOLAR_API_KEY"),
+                "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY")
+            },
             "transport": "stdio"
         }
-            })
+    })
+    
     # 从MCP Server中获取可提供使用的全部工具
-    amap_tools = await client.get_tools()
-    # 为工具添加人工审查
-    # tool_pool = [await add_human_in_the_loop(index) for index in amap_tools]
-
-
-    # 返回工具列表
-    return amap_tools
+    all_tools = await client.get_tools()
+    
+    # 根据工具类型过滤
+    if tool_type == "search":
+        # 只返回搜索工具（工具名包含 "search"）
+        search_tools = [tool for tool in all_tools if "search" in tool.name.lower()]
+        logger.info(f"返回 {len(search_tools)} 个搜索工具")
+        return search_tools
+    
+    elif tool_type == "download":
+        # 只返回下载工具（工具名包含 "download"）
+        download_tools = [tool for tool in all_tools if "download" in tool.name.lower()]
+        logger.info(f"返回 {len(download_tools)} 个下载工具")
+        return download_tools
+    
+    else:
+        # 返回所有工具
+        logger.info(f"返回全部 {len(all_tools)} 个工具")
+        return all_tools
 
 ## HITL + GET_TOOLS(里面定了工具：tool_pool or mcp_client)
 if __name__ == '__main__':
-    tools=asyncio.run(get_tools())
-    for tool in tools:
-        print("-------------------------------------------------")
-        print(f"工具名称: {tool.name}")
-        print(f"工具描述: {tool.description}")
-    print("-------------------------------------------------")
-    print(f"一共有 {len(tools)} 个工具可用。")
+    import asyncio
+    
+    async def test_tools():
+        # 测试获取所有工具
+        print("=" * 60)
+        print("测试获取所有工具")
+        print("=" * 60)
+        all_tools = await get_tools(tool_type="all")
+        print(f"一共有 {len(all_tools)} 个工具可用。\n")
+        
+        # 测试获取搜索工具
+        print("=" * 60)
+        print("测试获取搜索工具")
+        print("=" * 60)
+        search_tools = await get_tools(tool_type="search")
+        print(f"一共有 {len(search_tools)} 个搜索工具：")
+        for i, tool in enumerate(search_tools, 1):
+            print(f"{i}. {tool.name}: {tool.description[:50]}...")
+        print()
+        
+        # 测试获取下载工具
+        print("=" * 60)
+        print("测试获取下载工具")
+        print("=" * 60)
+        download_tools = await get_tools(tool_type="download")
+        print(f"一共有 {len(download_tools)} 个下载工具：")
+        for i, tool in enumerate(download_tools, 1):
+            print(f"{i}. {tool.name}: {tool.description[:50]}...")
+        print()
+    
+    asyncio.run(test_tools())

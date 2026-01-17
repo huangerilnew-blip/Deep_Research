@@ -39,7 +39,7 @@ class TavilySearcher:
             limit: 结果数量限制，默认使用Config.TAVILY_NUM
             
         Returns:
-            List[Paper]: 解析后的Paper对象列表
+            List[Paper]: 解析后的Paper对象列表（仅包含score > 0.8的结果）
         """
         max_results = limit if limit is not None else self.max_results
         
@@ -55,17 +55,28 @@ class TavilySearcher:
             print("搜索结果为空。")
             return []
         
-        print(f"获取到 {len(results)} 条搜索结果，正在解析...")
+        print(f"获取到 {len(results)} 条搜索结果，正在过滤和解析...")
         papers = []
+        filtered_count = 0
+        
         for result in results:
             try:
+                score = result.get("score", 0.0)
+                
+                # 只解析 score > 0.8 的结果
+                if score <= 0.8:
+                    filtered_count += 1
+                    print(f"过滤低分结果 (score={score:.4f}): {result.get('title', 'N/A')[:50]}...")
+                    continue
+                
                 paper = self._parse_result(result)
                 papers.append(paper)
-                print(f"解析成功: {paper.title[:50]}...")
+                print(f"解析成功 (score={score:.4f}): {paper.title[:50]}...")
             except Exception as e:
                 print(f"解析结果失败，跳过: {e}")
                 continue
         
+        print(f"过滤了 {filtered_count} 条低分结果，保留 {len(papers)} 条高质量结果")
         return papers
     
     async def download(
@@ -75,7 +86,7 @@ class TavilySearcher:
         filename: str = None
     ) -> List[Paper]:
         """
-        将Paper列表导出为JSON文件
+        将Paper列表导出为Markdown文件
         
         Args:
             papers: 单个Paper或Paper列表
@@ -102,13 +113,26 @@ class TavilySearcher:
         # 生成文件名
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"tavily_search_{timestamp}.json"
+            filename = f"tavily_search_{timestamp}.md"
         
-        # 生成JSON内容 (List[dict])
-        json_data = [self._paper_to_dict(paper) for paper in paper_list]
+        # 生成Markdown内容
+        markdown_lines = [
+            f"# Tavily 搜索结果",
+            f"",
+            f"**生成时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"**结果数量:** {len(paper_list)}",
+            f"",
+            "---",
+            ""
+        ]
+        
+        for i, paper in enumerate(paper_list, 1):
+            markdown_lines.append(self._paper_to_markdown(paper, index=i))
+        
+        markdown_content = "\n".join(markdown_lines)
         
         # 保存文件
-        file_path = self._save_json(json_data, save_path, filename)
+        file_path = self._save_markdown(markdown_content, save_path, filename)
         
         # 更新每个Paper的saved_path
         for paper in paper_list:
@@ -116,7 +140,7 @@ class TavilySearcher:
                 paper.extra = {}
             paper.extra["saved_path"] = file_path
         
-        print(f"JSON文件已保存: {file_path}")
+        print(f"Markdown文件已保存: {file_path}")
         return paper_list
 
 
@@ -135,7 +159,8 @@ class TavilySearcher:
             "api_key": self.api_key,
             "query": query,
             "search_depth": "basic",
-            "max_results": max_results
+            "max_results": max_results,
+            "include_raw_content": True
         }
         
         try:
@@ -166,6 +191,7 @@ class TavilySearcher:
         # 提取字段
         title = result.get("title", "No Title")
         content = result.get("content", "")
+        raw_content = result.get("raw_content", "")
         url = result.get("url", "")
         score = result.get("score", 0.0)
         
@@ -196,7 +222,10 @@ class TavilySearcher:
             pdf_url=None,
             url=url,
             source="tavily",
-            extra={"score": score}
+            extra={
+                "score": score,
+                "raw_content": raw_content
+            }
         )
 
     def _paper_to_dict(self, paper: Paper) -> dict:
@@ -209,7 +238,7 @@ class TavilySearcher:
         Returns:
             dict: Paper的字典表示
         """
-        return {
+        result = {
             "paper_id": paper.paper_id,
             "title": paper.title,
             "url": paper.url,
@@ -218,6 +247,12 @@ class TavilySearcher:
             "score": paper.extra.get("score") if paper.extra else None,
             "source": paper.source
         }
+        
+        # 添加 raw_content（如果存在）
+        if paper.extra and "raw_content" in paper.extra:
+            result["raw_content"] = paper.extra["raw_content"]
+        
+        return result
 
     def _save_json(self, data: dict, save_path: str, filename: str) -> str:
         """
@@ -245,27 +280,43 @@ class TavilySearcher:
             print(error_msg)
             return error_msg
 
-    def _paper_to_markdown(self, paper: Paper) -> str:
+    def _paper_to_markdown(self, paper: Paper, index: int = None) -> str:
         """
         将单个Paper转换为Markdown格式字符串
         
         Args:
             paper: Paper对象
+            index: 序号（可选）
             
         Returns:
             str: Markdown格式字符串
         """
         lines = []
-        lines.append(f"## {paper.title}\n")
-        lines.append(f"**来源:** [{paper.url}]({paper.url})")
-        lines.append(f"**发布日期:** {paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A'}")
+        
+        # 标题
+        if index:
+            lines.append(f"## {index}. {paper.title}\n")
+        else:
+            lines.append(f"## {paper.title}\n")
+        
+        # 基本信息
+        lines.append("### 基本信息")
+        lines.append(f"- **来源:** [{paper.url}]({paper.url})")
+        lines.append(f"- **发布日期:** {paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A'}")
         
         # 添加相关性评分（如果有）
         if paper.extra and "score" in paper.extra:
-            lines.append(f"**相关性评分:** {paper.extra['score']:.4f}")
+            lines.append(f"- **相关性评分:** {paper.extra['score']:.4f}")
         
+        # 摘要
         lines.append("\n### 摘要")
         lines.append(paper.abstract if paper.abstract else "无摘要内容")
+        
+        # 完整内容（如果有 raw_content）
+        if paper.extra and paper.extra.get("raw_content"):
+            lines.append("\n### 完整内容")
+            lines.append(paper.extra["raw_content"])
+        
         lines.append("\n---\n")
         
         return "\n".join(lines)
@@ -320,8 +371,8 @@ async def main():
         print(f"   URL: {p.url}")
         print(f"   评分: {p.extra.get('score', 'N/A')}")
     
-    # Step 2: 下载为JSON
-    print("\n=== 导出为JSON ===")
+    # Step 2: 下载为Markdown
+    print("\n=== 导出为Markdown ===")
     downloaded = await searcher.download(papers)
     
     for p in downloaded:

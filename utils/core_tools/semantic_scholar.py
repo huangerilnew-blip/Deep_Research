@@ -278,6 +278,39 @@ class SemanticScholarSearcher:
         """检查内容是否为有效 PDF"""
         return len(content) > 10000 and content[:4] == b'%PDF'
 
+    def _find_existing_paper_by_doi(self, save_path: str, doi: str) -> Optional[str]:
+        """
+        在保存目录中查找是否已存在具有相同 DOI 的文件
+        
+        Args:
+            save_path: 保存目录
+            doi: 论文的 DOI
+            
+        Returns:
+            Optional[str]: 如果找到已存在的文件，返回文件路径；否则返回 None
+        """
+        if not doi or not os.path.exists(save_path):
+            return None
+        
+        # 将 DOI 转换为文件名格式（替换 / 为 _）
+        safe_doi = doi.replace("/", "_")
+        expected_filename = f"{safe_doi}.pdf"
+        expected_path = os.path.join(save_path, expected_filename)
+        
+        # 检查标准文件名是否存在
+        if os.path.exists(expected_path):
+            return expected_path
+        
+        # 遍历目录中的所有 PDF 文件，检查文件名是否包含该 DOI
+        try:
+            for filename in os.listdir(save_path):
+                if filename.endswith(".pdf") and safe_doi in filename:
+                    return os.path.join(save_path, filename)
+        except Exception:
+            pass
+        
+        return None
+
     def _get_alternative_pdf_urls(self, paper: Paper) -> List[str]:
         """
         获取论文的所有可能的 PDF 下载链接
@@ -386,9 +419,20 @@ class SemanticScholarSearcher:
         if not paper.pdf_url:
             return "No fulltext available"
         
+        # 首先检查目录中是否已存在该 DOI 的文件
+        doi = paper.doi
+        if not doi and paper.extra:
+            doi = paper.extra.get("externalIds", {}).get("DOI")
+        
+        if doi:
+            existing_file = self._find_existing_paper_by_doi(save_path, doi)
+            if existing_file:
+                print(f"文件已存在（基于 DOI）: {existing_file}")
+                return existing_file
+        
         # 生成文件名（优先使用 DOI）
-        if paper.doi:
-            safe_doi = paper.doi.replace("/", "_")
+        if doi:
+            safe_doi = doi.replace("/", "_")
             filename = f"{safe_doi}.pdf"
         elif paper.paper_id:
             filename = f"{paper.paper_id}.pdf"
@@ -406,10 +450,6 @@ class SemanticScholarSearcher:
         urls_to_try = self._get_alternative_pdf_urls(paper)
         
         # 尝试从 Unpaywall 获取备用链接
-        doi = paper.doi
-        if not doi and paper.extra:
-            doi = paper.extra.get("externalIds", {}).get("DOI")
-        
         unpaywall_url = await self._get_unpaywall_pdf_url(client, doi)
         if unpaywall_url and unpaywall_url not in urls_to_try:
             urls_to_try.insert(1, unpaywall_url)

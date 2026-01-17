@@ -1,13 +1,15 @@
+"""
+ExecutorAgent 新版本 - 使用 LangGraph 标准模式处理可选工具
+"""
+
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt import ToolNode
 from config import Config
 from llms import get_llm
 from typing import TypedDict, Annotated, List, Dict, Any
-from langgraph.graph import add_messages, StateGraph, START, END, state
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.messages import AnyMessage, AIMessage, HumanMessage,ToolMessage
-from langchain_core.messages import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langgraph.graph import add_messages, StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import AnyMessage, AIMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 import logging, json, asyncio
@@ -18,15 +20,14 @@ from llama_index.core import VectorStoreIndex, Document
 from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-# 设置日志基本配置，级别为DEBUG或INFO
+# 设置日志
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-logger.handlers = []  # 清空默认处理器
-# 使用ConcurrentRotatingFileHandler
+logger.handlers = []
 handler = ConcurrentRotatingFileHandler(
     Config.LOG_FILE,
-    maxBytes = Config.MAX_BYTES,
-    backupCount = Config.BACKUP_COUNT
+    maxBytes=Config.MAX_BYTES,
+    backupCount=Config.BACKUP_COUNT
 )
 handler.setLevel(logging.DEBUG)
 handler.setFormatter(logging.Formatter(
@@ -34,106 +35,15 @@ handler.setFormatter(logging.Formatter(
 ))
 logger.addHandler(handler)
 
-class PlannerState(TypedDict):
-    planner_messages: Annotated[list[AnyMessage], add_messages]
-    planner_result: AIMessage
-    epoch: int
 
 class ExecutorState(TypedDict):
     executor_messages: Annotated[list[AnyMessage], add_messages]
     current_query: str  # 当前处理的子问题
-    optional_search_results:Annotated[list[ToolMessage], add_messages]  # 可选工具的搜索结果
+    optional_search_results: List[Dict]  # 可选工具的搜索结果
     search_results: List[Dict]  # 所有搜索结果（必需工具 + 可选工具）
     reranked_results: List[Dict]  # Rerank后的结果
     downloaded_papers: List[Dict]  # 已下载的论文
     executor_result: Dict  # 最终结果摘要
-
-class PlannerAgent:
-    def __init__(self, pool: AsyncConnectionPool, modelname: ChatOpenAI = Config.LLM_PLANNER):
-        self.chat_llm = get_llm(modelname)[0]
-        self.memory = AsyncPostgresSaver(pool)
-        self.graph = self._build_graph()
-
-    def _json_node(self, state: PlannerState, planner_epoch=Config.PLANNER_EPOCH) -> dict:
-        prompt = """请根据用户提供的主要问题{query}，从多个维度拆解成子问题列表。在回答中，你需要遵循以下要求：
-
-        1. **拆解主问题：** 根据问题的多个层次和方面进行拆解，确保每个子问题具体且明确。
-        2. **生成子问题列表：** 将拆解后的子问题组织成一个简单的列表，每个子问题是一个字符串。
-        3. **结构化输出：** 使用以下JSON格式来输出子问题列表：
-
-        ```
-        {{
-          "tasks": [
-            "子问题1",
-            "子问题2",
-            "子问题3"
-          ]
-        }}
-        ```
-
-        **详细规则：**
-
-        - "tasks"是一个字符串数组，每个元素是一个具体的子问题。
-        - json的样例中虽然只放了三个子问题，但是你一定不能受到三个子问题数量的限制。而是要思考主问题，去拆解分析，打破欧式距离限制，帮助用户深层次的去了解问题。
-        - 子问题之间不需要考虑依赖关系，只需要列出所有相关的子问题即可。
-        """
-        query = state["planner_messages"][0]
-        template = ChatPromptTemplate.from_messages([
-            {"role": "system", "content": prompt}],
-        )
-        try:
-            chain = {"query": RunnablePassthrough()} | template | self.chat_llm
-            if state["epoch"] < planner_epoch:
-                result = chain.invoke(query)
-                state["epoch"] += 1
-                return {"planner_messages": [result]}
-        except Exception as e:
-            logger.error(f"planner_agent_node1 分析用户的问题时，出现错误:{e}")
-            raise e
-
-    def _condition_router(self, state: PlannerState, planner_epoch=Config.PLANNER_EPOCH):
-        result = state["planner_messages"][-1]
-        if isinstance(result, AIMessage):
-            if state["epoch"] < planner_epoch:
-                try:
-                    _ = json.loads(result.content)
-                    state["planner_result"] = result
-                    return "END"
-                except Exception:
-                    return "json_node"
-            state["planner_result"] = AIMessage(content=str({"tasks": "error"}))
-            logger.warning(f"planner_agent 达到最大迭代次数{planner_epoch}，仍未能生成有效的json结构，结束planner流程")
-            return "END"
-        logger.error(f"planner_agent 条件路由器收到非AIMessage类型的消息，类型为:{type(result)}，内容为:{result.content}")
-        raise TypeError(f"planner_agent 条件路由器收到非AIMessage类型的消息，类型为:{type(result)}")
-    
-    def _build_graph(self):
-        builder = StateGraph(PlannerState)
-        builder.add_node("json_node", self._json_node)
-        builder.add_edge(START, "json_node")
-        builder.add_conditional_edges("json_node", self._condition_router, {"END": END, "json_node": "json_node"})
-        builder.compile(checkpointer=self.memory)
-        logger.info(f"完成planner_graph的初始化构造")
-        return builder
-
-    async def invoke(self, thread_id: str):
-        query = state["planner_messages"][0]
-        config = {"configurable": {"thread_id": thread_id}}
-        try:
-            response = await self.chat_llm.ainvoke(query, config)
-            logger.info(f"planner_chatmodel对于用户的{query} 返回:{response}")
-            return response
-        except Exception as e:
-            logger.error(f"planner_chatmodel对于用户的{query} 出现错误：{e}")
-            raise e
-
-    async def _clean(self):
-        if self.memory:
-            try:
-                await self.memory.aclose()
-                logger.info("对实例化的PlannerAgent,完成对短期记忆连接池的断开处理")
-            except Exception as e:
-                logger.info(f"尝试对实例化的PlannerAgent与短期记忆连接池断开，出现错误：{e}")
 
 
 class ExecutorAgent:
@@ -141,11 +51,9 @@ class ExecutorAgent:
     ExecutorAgent: 负责执行单个子问题的完整处理流程
     
     处理流程：
-    START → llm_decision_node → [条件边] → optional_tool_node → llm_decision_node (循环) → search_node → clean_and_rerank → download → summarize → END
+    START → llm_decision_node → [条件边] → optional_tool_node → search_node → clean_and_rerank → download → summarize → END
                                    ↓
-                                search_node (直接跳过循环)
-    
-    LLM 可以多次决策是否调用可选工具，形成循环，直到 LLM 认为已经收集了足够的信息。
+                                search_node (直接跳过)
     """
     
     def __init__(self, pool: AsyncConnectionPool, modelname: ChatOpenAI = Config.LLM_EXECUTOR):
@@ -185,136 +93,42 @@ class ExecutorAgent:
         optional_tool_names = ["sec_edgar_search", "akshare_search"]
         return [t for t in self.search_tools if any(opt in t.name.lower() for opt in optional_tool_names)]
     
-    def _format_observation(self, tool_messages: List[ToolMessage]) -> List[ToolMessage]:
-        """
-        格式化工具执行结果为观察信息（Observation）
-        裁剪 ToolMessage 内容，只保留关键信息用于 LLM 决策
-        目的：减少 Token 消耗，加快 LLM 判断速度
-        
-        Args:
-            tool_messages: 原始的 ToolMessage 列表
-            
-        Returns:
-            格式化后的 ToolMessage 列表，内容精简但包含关键信息
-        """
-        if not tool_messages:
-            logger.error(f"ExecutorAgent的optional_search_results状态为空，无法进行格式化处理")
-            return []
-        
-        formatted_messages = []
-        
-        for tool_msg in tool_messages:
-            content = tool_msg.content
-            
-            try:
-                # 解析 JSON 内容
-                if isinstance(content, str):
-                    papers = json.loads(content)
-                elif isinstance(content, list):
-                    papers = content
-                else:
-                    formatted_messages.append(tool_msg)
-                    continue
-                
-                # 提取关键信息摘要
-                observations = []
-                for paper in papers:
-                    source = paper.get("source", "unknown")
-                    title = paper.get("title", "无标题")
-                    
-                    if source == "sec_edgar":
-                        # SEC EDGAR: 显示公司名和简短预览
-                        company_name = paper.get("extra", {}).get("company_name", title)
-                        abstract = paper.get("abstract", "")
-                        preview = abstract[:150] + "..." if len(abstract) > 150 else abstract
-                        observations.append(
-                            f"✓ {company_name}\n"
-                            f"  来源: SEC EDGAR\n"
-                            f"  预览: {preview}"
-                        )
-                    elif source == "akshare":
-                        # AkShare: 显示公司名和简短预览
-                        abstract = paper.get("abstract", "")
-                        preview = abstract[:150] + "..." if len(abstract) > 150 else abstract
-                        observations.append(
-                            f"✓ {title}\n"
-                            f"  来源: AkShare\n"
-                            f"  预览: {preview}"
-                        )
-                    else:
-                        # 其他来源：只显示标题和来源
-                        observations.append(f"✓ {title} (来源: {source})")
-                
-                # 创建精简的 ToolMessage
-                if observations:
-                    formatted_content = "\n\n".join(observations)
-                    formatted_msg = ToolMessage(
-                        content=formatted_content,
-                        tool_call_id=tool_msg.tool_call_id,
-                        name=tool_msg.name
-                    )
-                    formatted_messages.append(formatted_msg)
-                else:
-                    formatted_messages.append(tool_msg)
-            
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"解析 ToolMessage 内容失败: {e}")
-                formatted_messages.append(tool_msg)
-                continue
-        
-        return formatted_messages
     async def _llm_decision_node(self, state: ExecutorState) -> Dict:
-        """
-        LLM 决策节点：按照 ReAct 模式让 LLM 进行推理和决策
-        利用 LangGraph 的消息流机制，让 LLM 看到完整的对话历史自主决策
-        """
-        # 从 executor_messages 的第一条消息获取 query
-        try:
-            query=state["executor_messages"].content
-        except Exception as e:
-            logger.error(f"ExctorAgent-llm_decision_node 状态错误{e}，无法正确提取用户查询")
-            raise e
-        # 缓存到 current_query 中，方便后续节点使用
-        if not state.get("current_query"):
-            state["current_query"] = query
-        
+        """LLM 决策节点：让 LLM 决定是否需要调用可选工具"""
+        query = state["current_query"]
         optional_tools = self._get_optional_tools()
-        optional_search_results = state.get("optional_search_results", [])
         
         if not optional_tools:
             logger.info("没有可选工具，跳过 LLM 决策")
-            return {"executor_messages": [AIMessage(content="Thought: 不需要额外的专业工具，可以直接进行搜索。")]}
+            return {"executor_messages": [AIMessage(content="不需要额外工具")]}
         
         logger.info(f"让 LLM 决定是否调用可选工具: {[t.name for t in optional_tools]}")
         
         try:
+            # 绑定可选工具到 LLM
             llm_with_tools = self.chat_llm.bind_tools(optional_tools)
             
-            # 构建消息列表：利用 LangGraph 的消息流
-            if optional_search_results:
-                # 有工具结果，使用裁剪后的 ToolMessage
-                formatted_messages = self._format_observation(optional_search_results)
-                
-                # 构建完整消息流：原始问题 + 之前的 AI 响应 + 工具结果
-                messages =[]+ state["executor_messages"][:2] + formatted_messages
-            else:
-                # 第一次决策，只有原始问题
-                messages = state["executor_messages"]
+            # 构建提示
+            prompt = f"""
+            子问题: {query}
             
-            # LLM 会看到完整的对话历史，自主决策
-            response = await llm_with_tools.ainvoke(messages)
+            请分析这个子问题，决定是否需要调用以下工具：
+            - sec_edgar_search: 查询美国证券市场（NYSE、NASDAQ）的公司信息
+            - akshare_search: 查询中国上市公司的基本情况
             
-            # 记录决策结果
-            has_tool_calls = hasattr(response, 'tool_calls') and bool(response.tool_calls)
-            logger.info(f"LLM 决策结果: 是否调用工具={has_tool_calls}")
-            if hasattr(response, 'content') and response.content:
-                logger.info(f"LLM 思考: {response.content[:150]}...")
+            如果需要，请调用相应的工具。如果不需要，直接回复"不需要额外工具"。
+            """
             
+            response = await llm_with_tools.ainvoke(prompt)
+            
+            logger.info(f"LLM 决策结果: 是否有工具调用={hasattr(response, 'tool_calls') and bool(response.tool_calls)}")
             return {"executor_messages": [response]}
         
         except Exception as e:
-            logger.error(f"ExctorAgent-llm_decision_node 状态错误{e}")
-            return {"executor_messages": [AIMessage(content="Thought: 决策过程出错，跳过可选工具，直接进行搜索。")]}
+            logger.error(f"LLM 决策出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"executor_messages": [AIMessage(content="决策出错，跳过可选工具")]}
     
     def _should_call_optional_tools(self, state: ExecutorState) -> str:
         """条件路由：判断是否需要调用可选工具"""
@@ -326,63 +140,65 @@ class ExecutorAgent:
                 logger.info(f"LLM 决定调用 {len(last_message.tool_calls)} 个可选工具")
                 return "optional_tool_node"
             else:
-                # LLM 决定不再调用可选工具，进入搜索阶段
-                logger.info("LLM 决定不调用可选工具，进入搜索阶段")
-                return "search"
+                logger.info("LLM 决定不调用可选工具")
+                return "search_node"
         else:
             logger.warning(f"意外的消息类型: {type(last_message)}")
-            return "search"
+            return "search_node"
     
     async def _optional_tool_node(self, state: ExecutorState) -> Dict:
-        """
-        可选工具节点：使用 LangGraph 的 ToolNode 执行工具调用
-        按照 ReAct 模式，执行 Action 并返回 Observation (ToolMessage)
-        """
-        # 检查最后一条消息是否有 tool_calls
-        last_message = state["executor_messages"][-1] if state["executor_messages"] else None
+        """可选工具节点：执行 LLM 决定调用的可选工具"""
+        last_message = state["executor_messages"][-1]
+        optional_search_results = []
         
-        
-        if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
-            logger.warning("AIMessage 中没有 tool_calls")
+        if not isinstance(last_message, AIMessage) or not hasattr(last_message, 'tool_calls'):
+            logger.warning("没有工具调用信息")
             return {"optional_search_results": []}
         
         optional_tools = self._get_optional_tools()
-        if isinstance(last_message,AIMessage) and last_message.tool_calls:
-            # 使用 LangGraph 的 ToolNode 自动处理工具调用
-            tool_node = ToolNode(optional_tools)
+        
+        for tool_call in last_message.tool_calls:
+            tool_name = tool_call.get('name')
+            tool_args = tool_call.get('args', {})
+            
+            logger.info(f"执行可选工具: {tool_name}, 参数: {tool_args}")
             
             try:
-                logger.info(f"准备执行 {len(last_message.tool_calls)} 个可选工具调用")
-                
-                # ToolNode 会自动处理 tool_calls 并返回 ToolMessage 列表
-                result = await tool_node.ainvoke(last_message)
-                #下面全不对
-                # # ToolNode 返回的是更新后的状态，提取 executor_messages 中新增的 ToolMessage
-                # new_messages = result.get("executor_messages", [])
-                
-                # # 过滤出 ToolMessage
-                # tool_messages = [msg for msg in new_messages if isinstance(msg, ToolMessage)]
-                
-                # # 记录日志
-                # logger.info(f"可选工具执行完成，返回 {len(tool_messages)} 条 ToolMessage")
-                # for tool_msg in tool_messages:
-                #     try:
-                #         content = json.loads(tool_msg.content) if isinstance(tool_msg.content, str) else tool_msg.content
-                #         if isinstance(content, list):
-                #             logger.info(f"  - 工具 {tool_msg.name} 返回 {len(content)} 条结果")
-                #     except:
-                #         logger.info(f"  - 工具 {tool_msg.name} 执行完成")
-                
-                # return {"optional_search_results": tool_messages}
+                # 查找工具
+                tool = next((t for t in optional_tools if t.name == tool_name), None)
+                if tool:
+                    result = await tool.ainvoke(tool_args)
+                    
+                    if result:
+                        # MCP 工具返回的是 JSON 字符串，需要解析
+                        if isinstance(result, str):
+                            try:
+                                papers = json.loads(result)
+                            except json.JSONDecodeError as e:
+                                logger.error(f"解析 JSON 失败: {e}")
+                                continue
+                        elif isinstance(result, list):
+                            papers = result
+                        else:
+                            logger.warning(f"未知的结果类型: {type(result)}")
+                            continue
+                        
+                        if isinstance(papers, list):
+                            optional_search_results.extend(papers)
+                            logger.info(f"工具 {tool_name} 返回 {len(papers)} 条结果")
+                else:
+                    logger.warning(f"未找到工具: {tool_name}")
             
             except Exception as e:
-                logger.error(f"执行可选工具时出错: {e}")
+                logger.error(f"执行可选工具 {tool_name} 时出错: {e}")
                 import traceback
                 traceback.print_exc()
-                return {"optional_search_results": []}
+        
+        logger.info(f"可选工具搜索完成，共获得 {len(optional_search_results)} 条结果")
+        return {"optional_search_results": optional_search_results}
     
     async def _search_node(self, state: ExecutorState) -> Dict:
-        """搜索节点：并行调用必需的搜索工具，然后合并可选工具的结果"""
+        """搜索节点：并行调用必需的搜索工具"""
         query = state["current_query"]
         required_tools = self._get_required_tools()
         
@@ -421,30 +237,11 @@ class ExecutorAgent:
                 import traceback
                 traceback.print_exc()
         
-        # 合并可选工具的搜索结果（从 ToolMessage 中提取）
-        optional_tool_messages = state.get("optional_search_results", [])
-        if optional_tool_messages:
-            logger.info(f"合并 {len(optional_tool_messages)} 条可选工具搜索结果")
-            
-            for tool_msg in optional_tool_messages:
-                try:
-                    content = tool_msg.content
-                    
-                    # 解析 ToolMessage 的内容
-                    if isinstance(content, str):
-                        papers = json.loads(content)
-                    elif isinstance(content, list):
-                        papers = content
-                    else:
-                        continue
-                    
-                    if isinstance(papers, list):
-                        search_results.extend(papers)
-                        logger.info(f"从 ToolMessage 中提取 {len(papers)} 条结果")
-                
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"解析 ToolMessage 内容失败: {e}")
-                    continue
+        # 合并可选工具的搜索结果
+        optional_results = state.get("optional_search_results", [])
+        if optional_results:
+            logger.info(f"合并 {len(optional_results)} 条可选工具搜索结果")
+            search_results.extend(optional_results)
         
         logger.info(f"搜索完成，共获得 {len(search_results)} 条结果")
         return {"search_results": search_results}
@@ -685,10 +482,10 @@ class ExecutorAgent:
             self._should_call_optional_tools,
             {
                 "optional_tool_node": "optional_tool_node",
-                "search": "search"
+                "search_node": "search"
             }
         )
-        builder.add_edge("optional_tool_node", "llm_decision")
+        builder.add_edge("optional_tool_node", "search")
         builder.add_edge("search", "clean_and_rerank")
         builder.add_edge("clean_and_rerank", "download")
         builder.add_edge("download", "summarize")

@@ -20,18 +20,23 @@ Tavily 是一个专为 AI 应用设计的搜索 API，提供高质量的网络�
 | `url` | `url` | 直接使用网页链接 |
 | `source` | - | 固定为 `"tavily"` |
 
+**注意：** 
+- `abstract` 字段存储 Tavily 返回的简短摘要（`content`）
+- 完整的网页原始内容存储在 `extra["raw_content"]` 中（需要设置 `include_raw_content=True`）
+
 ---
 
 ## Extra 字段详解
 
-`extra` 字段用于存储 Tavily 特有的搜索元数据。
+`extra` 字段用于存储 Tavily 特有的搜索元数据和完整内容。
 
 ### Extra 字段结构
 
 ```python
 extra = {
-    "score": float,      # 相关性评分
-    "saved_path": str    # 下载后的本地保存路径
+    "score": float,         # 相关性评分
+    "raw_content": str,     # 网页完整原始内容
+    "saved_path": str       # 下载后的本地保存路径
 }
 ```
 
@@ -40,7 +45,8 @@ extra = {
 
 | Extra 字段 | Tavily 来源 | 类型 | 说明 |
 |-----------|------------|------|------|
-| `score` | `score` | `float` | Tavily 返回的相关性评分，范围 0-1，值越高表示与查询越相关 |
+| `score` | `score` | `float` | Tavily 返回的相关性评分，范围 0-1，值越高表示与查询越相关。**仅 score > 0.8 的结果会被解析为 Paper** |
+| `raw_content` | `raw_content` | `str` | 网页的完整原始内容（需要 API 请求中设置 `include_raw_content=True`） |
 | `saved_path` | - | `str` | 调用 `download()` 后填充，Markdown 文件保存路径 |
 
 ### 使用示例
@@ -53,6 +59,16 @@ print(f"相关性评分: {score:.4f}")
 # 按评分排序
 papers_sorted = sorted(papers, key=lambda p: p.extra.get("score", 0), reverse=True)
 
+# 获取完整原始内容
+raw_content = paper.extra.get("raw_content", "")
+if raw_content:
+    print(f"完整内容长度: {len(raw_content)} 字符")
+    print(f"内容预览: {raw_content[:200]}...")
+
+# 对比摘要和完整内容
+print(f"摘要长度: {len(paper.abstract)} 字符")
+print(f"完整内容长度: {len(paper.extra.get('raw_content', ''))} 字符")
+
 # 检查下载路径
 saved_path = paper.extra.get("saved_path")
 if saved_path:
@@ -63,7 +79,42 @@ if saved_path:
 
 ## 特殊处理逻辑
 
-### 1. Paper ID 生成
+### 1. Score 过滤机制
+
+```python
+# 只解析 score > 0.8 的高质量结果
+for result in results:
+    score = result.get("score", 0.0)
+    
+    if score <= 0.8:
+        print(f"过滤低分结果 (score={score:.4f}): {result.get('title', 'N/A')[:50]}...")
+        continue
+    
+    paper = self._parse_result(result)
+    papers.append(paper)
+```
+
+**说明：** 为了保证结果质量，只有相关性评分大于 0.8 的搜索结果才会被解析为 Paper 对象。
+
+### 2. Raw Content 获取
+
+```python
+# API 请求中启用 raw_content
+payload = {
+    "api_key": self.api_key,
+    "query": query,
+    "search_depth": "basic",
+    "max_results": max_results,
+    "include_raw_content": True  # 获取完整网页内容
+}
+```
+
+**说明：** 
+- `include_raw_content=True` 会让 Tavily 返回网页的完整原始内容
+- `content` 字段：简短摘要（存储在 `abstract`）
+- `raw_content` 字段：完整内容（存储在 `extra["raw_content"]`）
+
+### 3. Paper ID 生成
 
 ```python
 # 使用 URL 的 MD5 哈希值前 16 位作为唯一标识
@@ -75,7 +126,7 @@ else:
     paper_id = f"tavily_{datetime.now().timestamp()}"
 ```
 
-### 2. 发布日期解析
+### 4. 发布日期解析
 
 ```python
 published_date_raw = result.get("publishedDate")
@@ -94,12 +145,13 @@ else:
     published_date = datetime.now()
 ```
 
-### 3. Download 方法特点
+### 5. Download 方法特点
 
 Tavily 的 `download` 方法与其他数据源不同：
 - 不下载 PDF 文件
 - 将所有搜索结果合并为一个 Markdown 文件
 - 支持自定义文件名
+- 包含摘要和完整原始内容（如果有）
 
 ```python
 # 默认文件名格式
@@ -107,20 +159,25 @@ filename = f"tavily_search_{timestamp}.md"
 
 # Markdown 文件结构
 """
-# Tavily搜索结果
+# Tavily 搜索结果
 
-**搜索时间:** 2024-01-15 10:30:00
+**生成时间:** 2026-01-17 12:00:00
 **结果数量:** 5
 
 ---
 
-## 标题1
-**来源:** [url](url)
-**发布日期:** 2024-01-10
-**相关性评分:** 0.9234
+## 1. 标题1
+
+### 基本信息
+- **来源:** [url](url)
+- **发布日期:** 2024-01-10
+- **相关性评分:** 0.9234
 
 ### 摘要
 内容摘要...
+
+### 完整内容
+网页的完整原始内容...
 
 ---
 """
@@ -134,6 +191,7 @@ filename = f"tavily_search_{timestamp}.md"
 def _parse_result(self, result: dict) -> Paper:
     title = result.get("title", "No Title")
     content = result.get("content", "")
+    raw_content = result.get("raw_content", "")
     url = result.get("url", "")
     score = result.get("score", 0.0)
     
@@ -145,13 +203,16 @@ def _parse_result(self, result: dict) -> Paper:
         paper_id=paper_id,
         title=title,
         authors=[],
-        abstract=content,
+        abstract=content,  # 简短摘要
         doi="",
         published_date=published_date,
         pdf_url=None,
         url=url,
         source="tavily",
-        extra={"score": score}
+        extra={
+            "score": score,
+            "raw_content": raw_content  # 完整原始内容
+        }
     )
 ```
 

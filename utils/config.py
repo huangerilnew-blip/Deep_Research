@@ -45,3 +45,8 @@ class Config:
     WIKI_NUM=3 #wiki检索返回数量
     WIKI_LANGUAGE="en" #wiki检索语言版本
     SEC_EDGAR_USER_AGENT="Trina Solar,m6qdum90f@zzzz.lingeringp.com"
+    
+    # Rerank 配置
+    RERANK_MODEL = "BAAI/bge-reranker-large"  # BGE Reranker 模型
+    RERANK_THRESHOLD = 0.5  # Rerank 分数阈值
+    RERANK_TOP_N = 20  # Rerank 后保留的文档数量
