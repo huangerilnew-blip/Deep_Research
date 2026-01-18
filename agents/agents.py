@@ -1,7 +1,10 @@
+import asyncio
+
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt import ToolNode
-from config import Config
-from llms import get_llm
+from core.config import Config
+from core.llms import get_llm
+from core.reranker import BGEReranker
 from typing import TypedDict, Annotated, List, Dict, Any
 from langgraph.graph import add_messages, StateGraph, START, END, state
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -12,11 +15,6 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 import logging, json, asyncio
 from concurrent_log_handler import ConcurrentRotatingFileHandler
-
-# LlamaIndex imports
-from llama_index.core import VectorStoreIndex, Document
-from llama_index.core.postprocessor import SentenceTransformerRerank
-from llama_index.embeddings.openai import OpenAIEmbedding
 
 # 设置日志基本配置，级别为DEBUG或INFO
 logger = logging.getLogger(__name__)
@@ -156,23 +154,23 @@ class ExecutorAgent:
         self.download_tools: list[BaseTool] = None  # 延迟加载
         self.memory = AsyncPostgresSaver(pool)
         
-        # 初始化 LlamaIndex Reranker
-        self.reranker = SentenceTransformerRerank(
-            model=Config.RERANK_MODEL,
-            top_n=Config.RERANK_TOP_N
+        # 初始化 BGE Reranker（使用 TEI 部署）
+        self.reranker = BGEReranker(
+            batch_size=Config.RERANK_BATCH_SIZE,
+            max_concurrent=Config.RERANK_MAX_CONCURRENT
         )
         
         self.graph = self._build_graph()
     
     def _get_search_tools(self) -> list[BaseTool]:
         """获取搜索工具（只包含 search 类工具）"""
-        from tools import get_tools
+        from core.tools import get_tools
         return asyncio.run(get_tools(tool_type="search"))
     
     async def _get_download_tools(self) -> list[BaseTool]:
         """获取下载工具（只包含 download 类工具）"""
         if self.download_tools is None:
-            from tools import get_tools
+            from core.tools import get_tools
             self.download_tools = await get_tools(tool_type="download")
         return self.download_tools
     
@@ -185,15 +183,62 @@ class ExecutorAgent:
         optional_tool_names = ["sec_edgar_search", "akshare_search"]
         return [t for t in self.search_tools if any(opt in t.name.lower() for opt in optional_tool_names)]
     
-    def _format_observation(self, tool_messages: List[ToolMessage]) -> List[ToolMessage]:
+    async def _invoke_single_tool(self, tool: BaseTool, query: str)->list[dict]:
+        """单个工具调用的异步函数
+        
+        Args:
+            tool: 已验证存在的工具对象
+            query: 搜索查询
         """
-        格式化工具执行结果为观察信息（Observation）
+        logger.info(f"调用工具 {tool.name} 搜索: {query}")
+        
+        try:
+            result = await tool.ainvoke({"query": query})
+        except Exception as e:
+            logger.error(f"工具 {tool.name} 调用失败: {e}")
+            raise RuntimeError(f"工具 {tool.name} 调用失败: {e}")
+        
+        # MultiServerMCPClient 返回的是 str 类型（从 TextContent.text 提取）
+        if not result or not isinstance(result, str):
+            logger.error(f"工具 {tool.name} 返回结果异常: type={type(result)}")
+            raise TypeError(f"工具 {tool.name} 返回结果类型错误")
+        
+        # 根据 mcp_server.py 的三种返回情况判断：
+        # 1. 正常返回：JSON 格式结果
+        # 2. 工具名不存在："Unknown tool: {name}"
+        # 3. 意外错误："Error executing {name}: ..."
+        
+        if result.startswith("Unknown tool:"):
+            logger.error(f"MCP 工具名不存在: {result}")
+            raise NameError(f"MCP 工具名不存在: {tool.name}")
+        
+        if result.startswith("Error executing"):
+            logger.error(f"MCP 工具执行错误: {result[:200]}")
+            raise RuntimeError(f"MCP 工具执行错误: {tool.name}")
+        
+        # 正常情况：解析 JSON
+        try:
+            papers = json.loads(result)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON 解析失败: {e}, 原始结果: {result[:200]}")
+            raise ValueError(f"工具 {tool.name} 返回的 JSON 格式错误")
+        
+        if not isinstance(papers, list):
+            logger.error(f"工具 {tool.name} 返回的数据不是列表: {type(papers)}")
+            raise TypeError(f"工具 {tool.name} 返回数据格式错误")
+        
+        logger.info(f"工具 {tool.name} 返回 {len(papers)} 条结果")
+        return papers
+    
+    def _crop_observation(self, tool_messages: List[ToolMessage]) -> List[ToolMessage]:
+        """
+        裁剪工具执行结果为观察信息（Observation）
         裁剪 ToolMessage 内容，只保留关键信息用于 LLM 决策
         目的：减少 Token 消耗，加快 LLM 判断速度
         
         Args:
             tool_messages: 原始的 ToolMessage 列表
-            
+
         Returns:
             格式化后的 ToolMessage 列表，内容精简但包含关键信息
         """
@@ -293,7 +338,7 @@ class ExecutorAgent:
             # 构建消息列表：利用 LangGraph 的消息流
             if optional_search_results:
                 # 有工具结果，使用裁剪后的 ToolMessage
-                formatted_messages = self._format_observation(optional_search_results)
+                formatted_messages = self._crop_observation(optional_search_results)
                 
                 # 构建完整消息流：原始问题 + 之前的 AI 响应 + 工具结果
                 messages =[]+ state["executor_messages"][:2] + formatted_messages
@@ -341,157 +386,120 @@ class ExecutorAgent:
         # 检查最后一条消息是否有 tool_calls
         last_message = state["executor_messages"][-1] if state["executor_messages"] else None
         
+        if not last_message or not isinstance(last_message, AIMessage):
+            logger.warning("最后一条消息不是 AIMessage")
+            return {"optional_search_results": []}
         
         if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
             logger.warning("AIMessage 中没有 tool_calls")
             return {"optional_search_results": []}
         
         optional_tools = self._get_optional_tools()
-        if isinstance(last_message,AIMessage) and last_message.tool_calls:
-            # 使用 LangGraph 的 ToolNode 自动处理工具调用
-            tool_node = ToolNode(optional_tools)
+        tool_node = ToolNode(optional_tools)
+        
+        try:
+            logger.info(f"准备执行 {len(last_message.tool_calls)} 个可选工具调用")
             
-            try:
-                logger.info(f"准备执行 {len(last_message.tool_calls)} 个可选工具调用")
-                
-                # ToolNode 会自动处理 tool_calls 并返回 ToolMessage 列表
-                result = await tool_node.ainvoke(last_message)
-                #下面全不对
-                # # ToolNode 返回的是更新后的状态，提取 executor_messages 中新增的 ToolMessage
-                # new_messages = result.get("executor_messages", [])
-                
-                # # 过滤出 ToolMessage
-                # tool_messages = [msg for msg in new_messages if isinstance(msg, ToolMessage)]
-                
-                # # 记录日志
-                # logger.info(f"可选工具执行完成，返回 {len(tool_messages)} 条 ToolMessage")
-                # for tool_msg in tool_messages:
-                #     try:
-                #         content = json.loads(tool_msg.content) if isinstance(tool_msg.content, str) else tool_msg.content
-                #         if isinstance(content, list):
-                #             logger.info(f"  - 工具 {tool_msg.name} 返回 {len(content)} 条结果")
-                #     except:
-                #         logger.info(f"  - 工具 {tool_msg.name} 执行完成")
-                
-                # return {"optional_search_results": tool_messages}
+            # ToolNode.ainvoke() 接收 AIMessage，返回 ToolMessage 列表
+            tool_messages = await tool_node.ainvoke(last_message)
             
-            except Exception as e:
-                logger.error(f"执行可选工具时出错: {e}")
-                import traceback
-                traceback.print_exc()
-                return {"optional_search_results": []}
+            # 确保返回的是列表
+            if not isinstance(tool_messages, list):
+                tool_messages = [tool_messages]
+            
+            # 记录日志
+            logger.info(f"可选工具执行完成，返回 {len(tool_messages)} 条 ToolMessage")
+            for tool_msg in tool_messages:
+                try:
+                    content = json.loads(tool_msg.content) if isinstance(tool_msg.content, str) else tool_msg.content
+                    if isinstance(content, list):
+                        logger.info(f"  - 工具 {tool_msg.name} 返回 {len(content)} 条结果")
+                except:
+                    logger.info(f"  - 工具 {tool_msg.name} 执行完成")
+            
+            return {"optional_search_results": [tool_messages],"executor_messages":[tool_messages]}
+        
+        except Exception as e:
+            logger.error(f"执行可选工具时出错: {e}")
+            raise e
     
     async def _search_node(self, state: ExecutorState) -> Dict:
-        """搜索节点：并行调用必需的搜索工具，然后合并可选工具的结果"""
+        """搜索节点：并行调用必需的搜索工具"""
         query = state["current_query"]
-        required_tools = self._get_required_tools()
+        required_tool_names = self._get_required_tools()
         
         search_results = []
         
         # 并行调用必需工具
-        logger.info(f"开始并行调用必需工具: {required_tools}")
-        for tool_name in required_tools:
-            try:
-                tool = next((t for t in self.search_tools if tool_name in t.name.lower()), None)
-                if tool:
-                    logger.info(f"调用工具 {tool.name} 搜索: {query}")
-                    result = await tool.ainvoke({"query": query})
-                    
-                    if result:
-                        # MCP 工具返回的是 JSON 字符串，需要解析
-                        if isinstance(result, str):
-                            try:
-                                papers = json.loads(result)
-                            except json.JSONDecodeError as e:
-                                logger.error(f"解析 JSON 失败: {e}, 原始结果: {result[:200]}")
-                                continue
-                        elif isinstance(result, list):
-                            papers = result
-                        else:
-                            logger.warning(f"未知的结果类型: {type(result)}")
-                            continue
-                        
-                        if isinstance(papers, list):
-                            search_results.extend(papers)
-                            logger.info(f"工具 {tool.name} 返回 {len(papers)} 条结果")
-                else:
-                    logger.warning(f"未找到工具: {tool_name}")
-            except Exception as e:
-                logger.error(f"调用工具 {tool_name} 时出错: {e}")
-                import traceback
-                traceback.print_exc()
+        logger.info(f"开始并行调用必需工具: {required_tool_names}")
         
-        # 合并可选工具的搜索结果（从 ToolMessage 中提取）
-        optional_tool_messages = state.get("optional_search_results", [])
-        if optional_tool_messages:
-            logger.info(f"合并 {len(optional_tool_messages)} 条可选工具搜索结果")
-            
-            for tool_msg in optional_tool_messages:
-                try:
-                    content = tool_msg.content
-                    
-                    # 解析 ToolMessage 的内容
-                    if isinstance(content, str):
-                        papers = json.loads(content)
-                    elif isinstance(content, list):
-                        papers = content
-                    else:
-                        continue
-                    
-                    if isinstance(papers, list):
-                        search_results.extend(papers)
-                        logger.info(f"从 ToolMessage 中提取 {len(papers)} 条结果")
-                
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"解析 ToolMessage 内容失败: {e}")
-                    continue
+        # 提前验证并获取工具对象
+        tools_to_invoke = []
+        for tool_name in required_tool_names:
+            tool = next((t for t in self.search_tools if tool_name in t.name.lower()), None)
+            if not tool:
+                logger.error(f"未找到必需工具: {tool_name}")
+                raise ValueError(f"未找到必需工具: {tool_name}")
+            tools_to_invoke.append(tool)
+        
+        # 使用 asyncio.gather 并发调用所有工具
+        tasks = [self._invoke_single_tool(tool, query) for tool in tools_to_invoke]
+        #[Exception，[paper]] 将正常结果进行判断
+        results = await asyncio.gather(*tasks, return_exceptions=True) #有异常也不终端
+        
+        # 处理结果，遇到异常记录，继续执行 
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"工具 {tools_to_invoke[i].name} 执行失败: {result}")
+                # 不中断流程，继续处理其他工具的结果
+            elif isinstance(result, list):# list[paper]
+                search_results.extend(result)
         
         logger.info(f"搜索完成，共获得 {len(search_results)} 条结果")
-        return {"search_results": search_results}
+        return {"search_results": search_results} #先不将工具检索的list[paper] 保存到"executor_messages"中
     
     def _extract_abstract(self, paper: Dict) -> str:
-        """根据数据源提取完整摘要"""
+        """根据数据源提取摘要
+        
+        只提取配置中指定的数据源的摘要用于 rerank
+        """
         source = paper.get("source", "").lower()
         
-        if source == "sec_edgar":
-            extra = paper.get("extra", {})
-            parts = []
-            if extra.get("company_info"):
-                parts.append(f"公司基本信息:\n{extra['company_info']}")
-            if extra.get("risk_factors"):
-                parts.append(f"\n\n风险情况:\n{extra['risk_factors']}")
-            if extra.get("company_assessment"):
-                parts.append(f"\n\n公司评估:\n{extra['company_assessment']}")
-            return "\n".join(parts) if parts else paper.get("abstract", "")
-        else:
+        # 只处理配置中指定的数据源
+        if source in Config.PAPER_CLEAN:
             return paper.get("abstract", "")
+        
+        return ""
     
     def _should_clean(self, paper: Dict) -> bool:
-        """判断是否需要清洗（用于 Rerank）"""
+        """判断是否需要清洗（用于Rerank）
+        只对配置中指定的数据源进行清洗，且必须有摘要
+        """
         source = paper.get("source", "").lower()
         abstract = paper.get("abstract", "")
         
-        if source == "openalex":
-            return True
-        elif source == "semantic_scholar":
+        # 只清洗配置中指定的数据源，且必须有摘要
+        if source in Config.PAPER_CLEAN:
             return bool(abstract)
-        elif source == "tavily":
-            return True
-        else:
-            return False
-    
-    async def _clean_and_rerank_node(self, state: ExecutorState) -> Dict:
-        """清洗和Rerank节点（使用 LlamaIndex）"""
-        query = state["current_query"]
-        search_results = state["search_results"]
         
+        return False
+    
+    async def _clean_node(self, state: ExecutorState) -> Dict:
+        """清洗和Rerank节点（使用 LlamaIndex）"""
+        try:
+            query = state["current_query"]
+            search_results = state["search_results"]
+        except Exception as e:
+            logger.error(f"ExecutorAgent clean_node 获取状态失败: {e}")
+            raise e
+
         if not search_results:
             logger.warning("没有搜索结果需要rerank")
             return {"reranked_results": []}
         
-        # 准备需要 rerank 的文档
-        papers_to_rerank = []
-        paper_indices = []
+        # 准备需要 rerank 的文档（只处理 openalex 和 semantic_scholar）
+        papers_to_rerank = [] #需要清洗的paper
+        paper_indices = [] #记录需要清洗的索引
         
         for i, paper in enumerate(search_results):
             if self._should_clean(paper):
@@ -500,38 +508,21 @@ class ExecutorAgent:
                     papers_to_rerank.append(abstract)
                     paper_indices.append(i)
         
-        logger.info(f"准备 rerank {len(papers_to_rerank)} 篇文档")
+        logger.info(f"准备 rerank {len(papers_to_rerank)} 篇文档（来源：{', '.join(Config.PAPER_CLEAN)}）")
         
         if not papers_to_rerank:
             logger.warning("没有需要 rerank 的文档")
             return {"reranked_results": search_results}
         
         try:
-            # 使用 LlamaIndex 创建文档
-            documents = [
-                Document(text=abstract, metadata={"index": idx})
-                for abstract, idx in zip(papers_to_rerank, paper_indices)
-            ]
-            
-            # 创建临时索引
-            index = VectorStoreIndex.from_documents(
-                documents,
-                embed_model=OpenAIEmbedding()
-            )
-            
-            # 使用 reranker 进行查询
-            query_engine = index.as_query_engine(
-                similarity_top_k=len(documents),
-                node_postprocessors=[self.reranker]
-            )
-            
-            response = query_engine.query(query)
+            # 使用 TEI 部署的 bge-reranker 进行重排序[{"index":xx,"score":xx}] 这里的index 是list[paper]中的index
+            rerank_results = await self._rerank_with_bge(query, papers_to_rerank, paper_indices)
             
             # 提取 rerank 后的结果
             reranked_results = []
-            for node in response.source_nodes:
-                original_idx = node.metadata.get("index")
-                score = node.score if hasattr(node, 'score') else 0.0
+            for item in rerank_results:
+                original_idx = item["index"]
+                score = item["score"]
                 
                 if score >= Config.RERANK_THRESHOLD:
                     paper = search_results[original_idx].copy()
@@ -540,16 +531,19 @@ class ExecutorAgent:
             
             reranked_results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
             
+            # 只保留 top_n 个结果
+            reranked_results = reranked_results[:Config.RERANK_TOP_N]
+            
             logger.info(f"Rerank 完成，保留 {len(reranked_results)} 篇相关文档")
             
-            # 添加未参与 rerank 的文档
+            # 添加未参与 rerank 的文档（其他来源的文档）
             for i, paper in enumerate(search_results):
                 if i not in paper_indices:
                     paper_copy = paper.copy()
                     paper_copy["rerank_score"] = 0.0
                     reranked_results.append(paper_copy)
             
-            return {"reranked_results": reranked_results}
+            return {"reranked_results": reranked_results} #list[dict(paper)]
         
         except Exception as e:
             logger.error(f"Rerank 过程出错: {e}")
@@ -557,20 +551,84 @@ class ExecutorAgent:
             traceback.print_exc()
             return {"reranked_results": search_results}
     
-    async def _download_node(self, state: ExecutorState) -> Dict:
-        """下载节点：根据 paper.source 按检索器类型进行下载"""
-        reranked_results = state["reranked_results"]
+    async def _rerank_with_bge(self, query: str, documents: List[str], indices: List[int]) -> List[Dict]:
+        """使用 BGEReranker 进行重排序
         
-        if not reranked_results:
+        Args:
+            query: 查询文本
+            documents: 待重排序的文档列表
+            indices: 文档在原始列表中的索引
+            
+        Returns:
+            重排序结果列表，每个元素包含 {"index": int, "score": float}
+        """
+        try:
+            # 调用 BGEReranker 的异步 rerank 方法
+            # 返回结果是 [{"index": int, "score": float}] 降序
+            rerank_results = await self.reranker.rerank_async(query, documents)
+            
+            # 将 rerank 返回的索引映射回原始索引
+            mapped_results = []
+            for item in rerank_results:
+                doc_idx = item["index"]
+                if doc_idx < len(indices):
+                    mapped_results.append({
+                        "index": indices[doc_idx],
+                        "score": item["score"]
+                    })
+            
+            return mapped_results
+            
+        except Exception as e:
+            logger.error(f"调用 BGEReranker 失败: {e}")
+            raise RuntimeError(f"Rerank papers 失败: {e}")
+    
+    async def _download_node(self, state: ExecutorState) -> Dict:
+        """下载节点：下载 reranked_results 和 optional_search_results 中的文档"""
+        reranked_results = state.get("reranked_results", [])
+        optional_search_results = state.get("optional_search_results", [])
+        
+        # 合并所有需要下载的文档
+        all_papers = []
+        
+        # 添加 reranked_results
+        if reranked_results:
+            all_papers.extend(reranked_results)
+            logger.info(f"从 reranked_results 获取 {len(reranked_results)} 篇文档")
+        
+        # 从 optional_search_results (List[ToolMessage]) 中提取文档
+        if optional_search_results:
+            for tool_msg in optional_search_results:
+                try:
+                    # tool_msg 是 ToolMessage 对象
+                    content = tool_msg.content
+                    
+                    if isinstance(content, str):
+                        papers = json.loads(content)
+                    elif isinstance(content, list):
+                        papers = content
+                    else:
+                        continue
+                    
+                    if isinstance(papers, list):
+                        all_papers.extend(papers)
+                        logger.info(f"从 optional_search_results 的工具 {tool_msg.name} 获取 {len(papers)} 篇文档")
+                except (json.JSONDecodeError, AttributeError) as e:
+                    logger.warning(f"解析 optional_search_results 失败: {e}")
+                    continue
+        
+        if not all_papers:
             logger.warning("没有需要下载的文档")
             return {"downloaded_papers": []}
+        
+        logger.info(f"总共需要下载 {len(all_papers)} 篇文档")
         
         download_tools = await self._get_download_tools()
         downloaded_papers = []
         
         # 按 source 分组
         papers_by_source = {}
-        for paper in reranked_results:
+        for paper in all_papers:
             source = paper.get("source", "unknown")
             if source not in papers_by_source:
                 papers_by_source[source] = []
@@ -616,56 +674,7 @@ class ExecutorAgent:
         
         logger.info(f"下载完成，共下载 {len(downloaded_papers)} 篇文档")
         return {"downloaded_papers": downloaded_papers}
-    
-    async def _summarize_node(self, state: ExecutorState) -> Dict:
-        """摘要节点：生成完整摘要"""
-        downloaded_papers = state["downloaded_papers"]
-        query = state["current_query"]
-        
-        summary = {
-            "query": query,
-            "total_papers": len(downloaded_papers),
-            "papers_by_source": {},
-            "top_papers": [],
-            "statistics": {
-                "searched": len(state.get("search_results", [])),
-                "after_rerank": len(state.get("reranked_results", [])),
-                "downloaded": len(downloaded_papers)
-            }
-        }
-        
-        # 按 source 统计
-        for paper in downloaded_papers:
-            source = paper.get("source", "unknown")
-            if source not in summary["papers_by_source"]:
-                summary["papers_by_source"][source] = 0
-            summary["papers_by_source"][source] += 1
-        
-        # 提取 top papers
-        sorted_papers = sorted(
-            downloaded_papers,
-            key=lambda x: x.get("rerank_score", 0),
-            reverse=True
-        )[:5]
-        
-        for paper in sorted_papers:
-            full_abstract = self._extract_abstract(paper)
-            
-            summary["top_papers"].append({
-                "title": paper.get("title", ""),
-                "source": paper.get("source", ""),
-                "rerank_score": paper.get("rerank_score", 0),
-                "url": paper.get("url", ""),
-                "saved_path": paper.get("extra", {}).get("saved_path", ""),
-                "abstract": full_abstract,
-                "authors": paper.get("authors", []),
-                "published_date": paper.get("published_date", ""),
-                "doi": paper.get("doi", "")
-            })
-        
-        logger.info(f"生成完整摘要完成: {summary['statistics']}")
-        return {"executor_result": summary}
-    
+      
     def _build_graph(self):
         """构建 ExecutorAgent 的处理流程图"""
         builder = StateGraph(ExecutorState)
@@ -674,9 +683,8 @@ class ExecutorAgent:
         builder.add_node("llm_decision", self._llm_decision_node)
         builder.add_node("optional_tool_node", self._optional_tool_node)
         builder.add_node("search", self._search_node)
-        builder.add_node("clean_and_rerank", self._clean_and_rerank_node)
+        builder.add_node("clean_and_rerank", self._clean_node)
         builder.add_node("download", self._download_node)
-        builder.add_node("summarize", self._summarize_node)
         
         # 添加边
         builder.add_edge(START, "llm_decision")
@@ -691,8 +699,7 @@ class ExecutorAgent:
         builder.add_edge("optional_tool_node", "llm_decision")
         builder.add_edge("search", "clean_and_rerank")
         builder.add_edge("clean_and_rerank", "download")
-        builder.add_edge("download", "summarize")
-        builder.add_edge("summarize", END)
+        builder.add_edge("download", END)
         
         graph = builder.compile(checkpointer=self.memory)
         logger.info("完成 executor_graph 的初始化构造")

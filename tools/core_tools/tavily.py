@@ -3,7 +3,7 @@ import hashlib
 import httpx
 import json
 import os
-from config import Config
+from core.config import Config
 from datetime import datetime
 from typing import List, Optional, Union
 from paper import Paper

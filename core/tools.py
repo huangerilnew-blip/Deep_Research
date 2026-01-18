@@ -12,7 +12,7 @@ from langgraph.prebuilt.interrupt import HumanInterruptConfig, HumanInterrupt
 
 from langgraph.types import interrupt, Command
 from langchain_core.tools import tool
-from config import Config
+from core.config import Config
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 
@@ -141,8 +141,8 @@ async def get_tools(tool_type: str = "all") -> list[BaseTool]:
     client = MultiServerMCPClient({
         "paper-search": {
             "command": "python",
-            "args": ["-m", "mcp_server"],
-            "cwd": os.path.join(os.path.dirname(__file__), "core_tools"),
+            "args": ["-m", "core.mcp_server"],
+            "cwd": os.path.dirname(os.path.dirname(__file__)),  # 项目根目录
             "env": {
                 "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY"),
                 "SEMANTIC_SCHOLAR_API_KEY": os.getenv("SEMANTIC_SCHOLAR_API_KEY"),

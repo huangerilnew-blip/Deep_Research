@@ -31,8 +31,8 @@ from typing import List, Union, Optional
 
 import akshare as ak
 
-from config import Config
-from paper import Paper
+from core.config import Config
+from tools.core_tools.paper import Paper
 
 
 class AkShareSearcher:

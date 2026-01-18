@@ -13,13 +13,13 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 # 导入所有搜索器
-from openalex import OpenAlexSearcher
-from semantic_scholar import SemanticScholarSearcher
-from wikipedia_searcher import WikipediaSearcher
-from tavily import TavilySearcher
-from sec_edgar import SECEdgarSearcher
-from akshare_searcher import AkShareSearcher
-from paper import Paper
+from tools.core_tools.openalex import OpenAlexSearcher
+from tools.core_tools.semantic_scholar import SemanticScholarSearcher
+from tools.core_tools.wikipedia_searcher import WikipediaSearcher
+from tools.core_tools.tavily import TavilySearcher
+from tools.core_tools.sec_edgar import SECEdgarSearcher
+from tools.core_tools.akshare_searcher import AkShareSearcher
+from tools.core_tools.paper import Paper
 
 # 创建 MCP Server 实例
 app = Server("paper-search-server")

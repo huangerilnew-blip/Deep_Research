@@ -1,5 +1,5 @@
 # pipeline
-## PlannerAgent
+## PlannerAgent-1.0版本
 - 功能:按照DAG思想，负责将用户的问题分解为多个子任务。
 - 输出格式json：
 - 样例
@@ -13,31 +13,30 @@
   ]
 }
 ```
-## ExecutorAgent
-- 功能:负责执行PlannerAgent生成的子任务，通过工具进行调用，并返回结果。
-- 问题：
-  1. 如果直接返回完整的结果，容易导致上下文长度太长
-  2. 使用检索器的排序，并不准确
-- 解决方案：
-  1. 返回结果摘要，控制上下文长度
-  2. 使用bge的bert模型进行rerank
-  - 输出格式json：
-```
-  {
-      "results": [
-          {"id": "T1", "result": "子问题1的结果摘要","paper_id":"id-1",score": 0.95"},
-          {"id": "T2", "result": "子问题2的结果摘要","paper_id":"id-90","score": 0.90"},
-          {"id": "T3", "result": "子问题3的结果摘要","paper_id":"id-0054","score": 0.88"},
-          {"id": "T4", "result": "子问题4的结果摘要","paper_id":"id-7009","score": 0.80"}
-      ]
-  }
-```
+## PlannerAgent-2.0版本
 
-- 流程
-    - 按照DAG思想，对任务进行拓扑排序，确保依赖的任务先执行
-    - 依次执行每个任务，调用相应的工具
-    - 收集每个任务的多个结果，根据摘要进行rerank，选择最优结果返回
-    - 根据paper_id和来源，下载pdf
+功能:只负责将用户的问题分解为多个子任务，不需要按照DAG思想。
+
+## 性格优化
+
+- 初始化parentagnt时候，先初始化多个executoragent，用于并发执行子问题
+
+## ExecutorAgent
+
+- 工具：只配置search类工具
+- 必要工具：
+  - wiki_search（md格式保存）：没有摘要，返回的是完整文档
+  - openalex_search（pdf格式保存）:一般都有摘要--paper.abstract
+  - sematic_scholar_search（pdf格式保存）：经常没有摘要，有的话就在--paper.abstract
+  - Tavily_search（md格式保存）:有摘要（已设置），保存在--paper.abstract
+- 可选工具
+  - sec_edgar_search（md格式保存）：无摘要，paper.abstract保存了较为完整的信息
+  - akshare_search(md格式)：无摘要，paper.abstract保存了较为完整的信息
+- 流程:
+  - _llm_decision_node:llm判断是否要调用可选工具
+  - _optional_tool_node：条件工具的执行
+  - search_node:必要工具的执行（异步执行）
+  - 
 
 ## build_vector_store
 - 功能:构建向量数据库

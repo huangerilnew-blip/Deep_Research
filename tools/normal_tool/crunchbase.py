@@ -39,8 +39,8 @@ import httpx
 from typing import List, Union, Optional
 from datetime import datetime
 
-from paper import Paper
-from config import Config
+from tools.core_tools.paper import Paper
+from core.config import Config
 
 
 class CrunchbaseSearcher:

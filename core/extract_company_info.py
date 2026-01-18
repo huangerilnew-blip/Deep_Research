@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import json
 from pathlib import Path
-from config import Config
+from core.config import Config
 
 
 def extract_company_info(base_path: str = None, columns_map: dict[str, str] = None,save_path: str = None) :

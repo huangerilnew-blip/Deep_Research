@@ -8,24 +8,15 @@ OpenAlex 是一个完全开放的学术文献目录，包含超过 2.4 亿篇文
 提供丰富的元数据和开放获取信息。API 无需 API Key，但建议提供 email 以进入
 polite pool 获得更高的请求限制。
 
-使用示例:
-
-
-主要功能:
-    - search: 根据关键词检索 OpenAlex 文献，返回 Paper 对象列表
-    - download: 根据 Paper 对象中的 pdf_url 下载全文文档
-
-Author: OpenAlex Searcher
-Version: 1.0.0
 """
 
 import os
 import httpx
 from typing import List, Union, Optional
 from datetime import datetime
-
-from paper import Paper
-from config import Config
+import asyncio
+from tools.core_tools.paper import Paper
+from core.config import Config
 
 
 class OpenAlexSearcher:
@@ -40,15 +31,17 @@ class OpenAlexSearcher:
         headers: HTTP 请求头
     """
     
-    def __init__(self, email: str = None):
+    def __init__(self, email: str = None, size: int = None):
         """
         初始化 OpenAlexSearcher
         
         Args:
             email: 邮箱地址，用于进入 OpenAlex polite pool 获得更高的请求限制。
                    默认使用 Config.EMAIL
+            size: 检索返回数量，默认使用 Config.SEARCH_SIZE
         """
         self.email = email or Config.EMAIL
+        self.size = size or Config.SEARCH_SIZE
         self.base_url = "https://api.openalex.org"
         self.headers = {
             "Accept": "application/json",
@@ -88,7 +81,9 @@ class OpenAlexSearcher:
         self, 
         client: httpx.AsyncClient, 
         query: str, 
-        limit: int
+        limit: int,
+        sort_by: str = "relevance_score:desc",
+        filter_params: dict = None
     ) -> List[dict]:
         """
         调用 OpenAlex API 搜索文献
@@ -97,6 +92,8 @@ class OpenAlexSearcher:
             client: HTTP 客户端
             query: 检索关键词
             limit: 最大返回数量
+            sort_by: 排序方式，默认按相关性降序
+            filter_params: 额外的过滤参数
             
         Returns:
             List[dict]: OpenAlex Work 对象列表
@@ -105,8 +102,13 @@ class OpenAlexSearcher:
         params = {
             "search": query,
             "per_page": limit,
-            "mailto": self.email
+            "mailto": self.email,
+            "sort": sort_by,
         }
+        
+        # 添加额外过滤参数
+        if filter_params:
+            params.update(filter_params)
         
         try:
             response = await client.get(url, params=params, headers=self.headers)
@@ -267,64 +269,330 @@ class OpenAlexSearcher:
         )
 
 
+    def _get_browser_headers(self, referer: str = None) -> dict:
+        """
+        获取模拟浏览器的请求头，降低被反爬检测的概率
+        
+        Args:
+            referer: 可选的 Referer 头，某些网站需要
+        """
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        if referer:
+            headers["Referer"] = referer
+        return headers
+
+    def _is_valid_pdf(self, content: bytes) -> bool:
+        """
+        检查下载的内容是否为有效的 PDF 文件
+        
+        Args:
+            content: 下载的文件内容
+            
+        Returns:
+            bool: 是否为有效 PDF
+        """
+        if len(content) < 4:
+            return False
+        return content[:4] == b'%PDF'
+
+    def _find_existing_paper_by_doi(self, save_path: str, doi: str) -> Optional[str]:
+        """
+        在保存目录中查找是否已存在具有相同 DOI 的文件
+        
+        Args:
+            save_path: 保存目录
+            doi: 论文的 DOI
+            
+        Returns:
+            Optional[str]: 如果找到已存在的文件，返回文件路径；否则返回 None
+        """
+        if not doi or not os.path.exists(save_path):
+            return None
+        
+        # 将 DOI 转换为文件名格式（替换 / 为 _）
+        safe_doi = doi.replace("/", "_")
+        expected_filename = f"{safe_doi}.pdf"
+        expected_path = os.path.join(save_path, expected_filename)
+        
+        # 检查标准文件名是否存在
+        if os.path.exists(expected_path):
+            return expected_path
+        
+        # 遍历目录中的所有 PDF 文件，检查文件名是否包含该 DOI
+        try:
+            for filename in os.listdir(save_path):
+                if filename.endswith(".pdf") and safe_doi in filename:
+                    return os.path.join(save_path, filename)
+        except Exception:
+            pass
+        
+        return None
+
+    def _get_all_pdf_urls(self, paper: Paper) -> List[str]:
+        """
+        获取论文的所有可能的 PDF 下载链接
+        
+        Args:
+            paper: Paper 对象
+            
+        Returns:
+            List[str]: PDF 链接列表，按优先级排序
+        """
+        urls = []
+        
+        # 1. 原始 pdf_url
+        if paper.pdf_url:
+            urls.append(paper.pdf_url)
+        
+        # 2. 如果有 DOI，构建常见的直接下载链接
+        if paper.doi:
+            # Sci-Hub 镜像（仅供学术研究）
+            # urls.append(f"https://sci-hub.se/{paper.doi}")
+            
+            # arXiv（如果是 arXiv 论文）
+            if "arxiv" in paper.doi.lower():
+                arxiv_id = paper.doi.split("/")[-1]
+                urls.append(f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+            
+            # PubMed Central
+            urls.append(f"https://www.ncbi.nlm.nih.gov/pmc/articles/pmid/{paper.doi}/pdf/")
+        
+        # 3. 从 extra 中获取其他可能的链接
+        if paper.extra:
+            # OpenAlex 可能在 extra 中存储了其他位置信息
+            oa_status = paper.extra.get("oa_status", "")
+            if oa_status == "gold" or oa_status == "green":
+                # 开放获取论文，原链接应该可用
+                pass
+        
+        return urls
+
+    async def _try_download_url(
+        self, 
+        client: httpx.AsyncClient, 
+        url: str, 
+        file_path: str,
+        referer: str = None
+    ) -> bool:
+        """
+        尝试从单个 URL 下载文件
+        
+        Args:
+            client: HTTP 客户端
+            url: 下载链接
+            file_path: 保存路径
+            referer: Referer 头
+            
+        Returns:
+            bool: 是否下载成功
+        """
+        try:
+            headers = self._get_browser_headers(referer)
+            
+            response = await client.get(
+                url,
+                headers=headers,
+                follow_redirects=True,
+                timeout=30.0
+            )
+            
+            if response.status_code != 200:
+                return False
+            
+            content = response.content
+            
+            # 检查文件大小（PDF 通常大于 10KB）
+            if len(content) < 10000:
+                return False
+            
+            # 验证是否为有效 PDF
+            if not self._is_valid_pdf(content):
+                return False
+            
+            # 保存文件
+            with open(file_path, "wb") as f:
+                f.write(content)
+            
+            return True
+            
+        except Exception:
+            return False
+
     async def _download_file(
         self, 
         client: httpx.AsyncClient, 
         paper: Paper, 
-        save_path: str
+        save_path: str,
+        max_retries: int = 3
     ) -> str:
         """
-        下载单个文件
+        下载单个文件，带多源重试机制
         
         Args:
             client: HTTP 客户端
             paper: Paper 对象
             save_path: 保存目录
+            max_retries: 每个 URL 的最大重试次数
             
         Returns:
             str: 文件保存路径或 "No fulltext available"
         """
+        import asyncio
+        import random
+        
         # 如果 pdf_url 为空，返回无全文标记
         if not paper.pdf_url:
             return "No fulltext available"
         
-        try:
-            # 发送 GET 请求下载文件
-            response = await client.get(
-                paper.pdf_url, 
-                headers=self.headers,
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            
-            # 生成文件名：使用 paper_id 或 DOI 作为文件名
-            if paper.paper_id:
-                # OpenAlex ID 格式为 https://openalex.org/W2741809807，提取最后部分
-                file_id = paper.paper_id.split("/")[-1] if "/" in paper.paper_id else paper.paper_id
-            elif paper.doi:
-                # DOI 中的 / 替换为 _
-                file_id = paper.doi.replace("/", "_")
-            else:
-                # 使用时间戳作为备选
-                file_id = f"paper_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            file_name = f"{file_id}.pdf"
-            file_path = os.path.join(save_path, file_name)
-            
-            # 保存文件
-            with open(file_path, "wb") as f:
-                f.write(response.content)
-            
+        # 首先检查目录中是否已存在该 DOI 的文件
+        if paper.doi:
+            existing_file = self._find_existing_paper_by_doi(save_path, paper.doi)
+            if existing_file:
+                print(f"文件已存在（基于 DOI）: {existing_file}")
+                return existing_file
+        
+        # 生成文件名（优先使用 DOI）
+        if paper.doi:
+            file_id = paper.doi.replace("/", "_")
+        elif paper.paper_id:
+            file_id = paper.paper_id.split("/")[-1] if "/" in paper.paper_id else paper.paper_id
+        else:
+            file_id = f"paper_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        file_name = f"{file_id}.pdf"
+        file_path = os.path.join(save_path, file_name)
+        
+        # 如果文件已存在，直接返回
+        if os.path.exists(file_path):
             return file_path
+        
+        # 收集所有可能的下载链接
+        urls_to_try = self._get_all_pdf_urls(paper)
+        
+        # 尝试从 Unpaywall 获取备用链接
+        alt_url = await self._get_alternative_pdf_url(client, paper.doi)
+        if alt_url and alt_url not in urls_to_try:
+            urls_to_try.insert(1, alt_url)  # 插入到第二位
+        
+        tried_urls = set()
+        
+        for url in urls_to_try:
+            if url in tried_urls:
+                continue
+            tried_urls.add(url)
             
-        except httpx.HTTPError as e:
-            print(f"HTTP error downloading {paper.pdf_url}: {e}")
-            return "No fulltext available"
-        except Exception as e:
-            print(f"Error downloading file: {e}")
-            return "No fulltext available"
+            # 从 URL 提取 referer
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            referer = f"{parsed.scheme}://{parsed.netloc}/"
+            
+            for attempt in range(max_retries):
+                # 添加随机延迟
+                if attempt > 0:
+                    delay = random.uniform(1, 3) * attempt
+                    await asyncio.sleep(delay)
+                
+                if await self._try_download_url(client, url, file_path, referer):
+                    return file_path
+        
+        return "No fulltext available"
 
-    async def search(self, query: str, limit: int = 5) -> List[Paper]:
+    async def _get_alternative_pdf_url(self, client: httpx.AsyncClient, doi: str) -> Optional[str]:
+        """
+        通过 Unpaywall API 获取备用 PDF 链接
+        
+        Unpaywall 是一个免费的开放获取查找服务，可以找到论文的合法免费版本
+        
+        Args:
+            client: HTTP 客户端
+            doi: 论文的 DOI
+            
+        Returns:
+            Optional[str]: 备用 PDF 链接，如果没有则返回 None
+        """
+        if not doi:
+            return None
+        
+        try:
+            # Unpaywall API
+            url = f"https://api.unpaywall.org/v2/{doi}"
+            params = {"email": self.email}
+            
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code != 200:
+                return None
+            
+            data = response.json()
+            
+            # 优先获取 best_oa_location
+            best_oa = data.get("best_oa_location")
+            if best_oa and best_oa.get("url_for_pdf"):
+                return best_oa["url_for_pdf"]
+            
+            # 遍历所有 oa_locations
+            oa_locations = data.get("oa_locations", [])
+            for loc in oa_locations:
+                if loc.get("url_for_pdf"):
+                    return loc["url_for_pdf"]
+            
+            return None
+            
+        except Exception as e:
+            print(f"获取备用链接失败: {e}")
+            return None
+
+    async def search(
+        self, 
+        query: str, 
+        limit: int = None,
+        sort_by: str = "relevance_score:desc",
+        from_year: int = None,
+        to_year: int = None,
+        open_access_only: bool = False,
+        has_pdf: bool = False
+    ) -> List[Paper]:
+        """
+        根据查询关键词检索 OpenAlex 文献
+        
+        Args:
+            query: 检索关键词，支持 OpenAlex 搜索语法
+            limit: 最大返回数量，默认使用 self.size
+            sort_by: 排序方式，可选值：
+                - "relevance_score:desc" (默认，按相关性降序)
+                - "cited_by_count:desc" (按引用数降序)
+                - "publication_date:desc" (按发布日期降序)
+            from_year: 起始年份，如 2020
+            to_year: 结束年份，如 2024
+            open_access_only: 是否只返回开放获取的文献
+            has_pdf: 是否只返回有 PDF 链接的文献
+            
+        Returns:
+            List[Paper]: 符合条件的 Paper 对象列表，包含完整的元信息
+        """
+        if limit is None:
+            limit = self.size
+        
+        # 构建过滤参数
+        filters = []
+        if from_year:
+            filters.append(f"from_publication_date:{from_year}-01-01")
+        if to_year:
+            filters.append(f"to_publication_date:{to_year}-12-31")
+        if open_access_only:
+            filters.append("is_oa:true")
+        if has_pdf:
+            filters.append("has_pdf_url:true")
+        
+        filter_params = {}
+        if filters:
+            filter_params["filter"] = ",".join(filters)
         """
         根据查询关键词检索 OpenAlex 文献
         
@@ -339,7 +607,7 @@ class OpenAlexSearcher:
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             # 调用 _search_works 获取 Work 列表
-            works = await self._search_works(client, query, limit)
+            works = await self._search_works(client, query, limit, sort_by, filter_params)
             
             # 遍历调用 _map_to_paper 转换为 Paper 列表
             for work in works:
@@ -382,8 +650,13 @@ class OpenAlexSearcher:
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         
+        # 统计有 PDF 链接的论文数量
+        papers_with_pdf = [p for p in paper_list if p.pdf_url]
+        print(f"共 {len(papers_with_pdf)} 篇论文待下载")
+        
         # 创建 httpx.AsyncClient 并下载文件
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        success_count = 0
+        async with httpx.AsyncClient(timeout=30.0) as client:
             for paper in paper_list:
                 # 调用 _download_file 下载文件
                 saved_path = await self._download_file(client, paper, save_path)
@@ -392,6 +665,13 @@ class OpenAlexSearcher:
                 if paper.extra is None:
                     paper.extra = {}
                 paper.extra["saved_path"] = saved_path
+                
+                # 打印成功下载的文件路径
+                if saved_path and saved_path != "No fulltext available":
+                    print(f"已保存: {saved_path}")
+                    success_count += 1
+        
+        print(f"下载完成: {success_count}/{len(papers_with_pdf)}")
         
         # 返回更新后的 Paper 列表
         return paper_list
@@ -418,8 +698,10 @@ async def main():
     print("\n【示例 1】单独使用 search 方法检索论文")
     print("-" * 40)
     
-    query = "deep learning neural network"
-    papers = await searcher.search(query, limit=3)
+    # query = "deep learning neural network"
+    # query = "强化学习"
+    query = "神经网络 图像识别"
+    papers = await searcher.search(query)
     
     print(f"检索关键词: {query}")
     print(f"检索到 {len(papers)} 篇论文:\n")
@@ -431,7 +713,7 @@ async def main():
         print(f"    发布日期: {paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A'}")
         print(f"    引用数: {paper.citations}")
         print(f"    PDF链接: {'有' if paper.pdf_url else '无'}")
-        print(f"    摘要: {paper.abstract[:100]}..." if paper.abstract else "    摘要: N/A")
+        print(f"    摘要: {paper.abstract}..." if paper.abstract else "    摘要: N/A")
         print()
     
     # ========== 示例 2: 单独使用 download 方法 ==========
@@ -442,18 +724,8 @@ async def main():
     papers_with_pdf = [p for p in papers if p.pdf_url]
     
     if papers_with_pdf:
-        print(f"找到 {len(papers_with_pdf)} 篇有 PDF 链接的论文，开始下载...")
-        
         # 下载论文（使用默认保存路径 Config.DOC_SAVE_PATH）
         downloaded_papers = await searcher.download(papers_with_pdf)
-        
-        for paper in downloaded_papers:
-            saved_path = paper.extra.get("saved_path", "")
-            if saved_path and saved_path != "No fulltext available":
-                print(f"✓ 下载成功: {paper.title[:50]}...")
-                print(f"  保存路径: {saved_path}")
-            else:
-                print(f"✗ 下载失败: {paper.title[:50]}...")
     else:
         print("没有找到有 PDF 链接的论文")
     
@@ -470,15 +742,8 @@ async def main():
     
     # 直接下载所有检索到的论文
     if papers2:
-        # 可以指定自定义保存路径
-        custom_save_path = "./downloads"
-        downloaded = await searcher.download(papers2, save_path=custom_save_path)
-        
-        print(f"\n下载结果 (保存到 {custom_save_path}):")
-        for paper in downloaded:
-            saved_path = paper.extra.get("saved_path", "")
-            status = "✓ 成功" if saved_path and saved_path != "No fulltext available" else "✗ 无全文"
-            print(f"  {status}: {paper.title[:40]}...")
+        # 使用默认保存路径 Config.DOC_SAVE_PATH
+        downloaded = await searcher.download(papers2)
     
     # ========== 示例 4: 访问 Paper 对象的详细信息 ==========
     print("\n【示例 4】访问 Paper 对象的详细信息")
@@ -506,5 +771,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
+
     asyncio.run(main())

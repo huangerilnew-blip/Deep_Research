@@ -18,8 +18,8 @@ async def test_mcp_server():
     client = MultiServerMCPClient({
         "paper-search": {
             "command": "python",
-            "args": ["-m", "mcp_server"],
-            "cwd": ".",  # 当前目录
+            "args": ["-m", "core.mcp_server"],
+            "cwd": "..",  # 项目根目录（相对于 core/）
             "transport": "stdio"
         }
     })

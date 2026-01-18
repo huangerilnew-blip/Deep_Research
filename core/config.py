@@ -32,12 +32,12 @@ class Config:
     EMAIL="huang.eril.new@gmail.com" ##pubmed 中最好提供邮箱，防止封id
 
     # 向量存储和文档路径配置
-    DOC_SAVE_PATH="../../doc/downloads" # 网站下载的文档存储路径
-    VECTOR_STORE_PATH="../vector_storage" # 向量存储路径
+    DOC_SAVE_PATH="data/downloads" # 网站下载的文档存储路径
+    VECTOR_STORE_PATH="vector_storage" # 向量存储路径
     VECTTOR_BASE_COLLECTION_NAME="base_collection" #基础向量集合名称
-    VECTTOR_BASEDATA_PATH="../doc/crunchbase_data" #基础数据路径
+    VECTTOR_BASEDATA_PATH="data/crunchbase_data" #基础数据路径
     VECTOR_DIM=1024 #向量维度
-    BASEDATA_RESTRUCTURE_PATH="../doc/crunchbase_data/restructure_data/restructure_company_info.json" #清洗与重构后的基础数据路径
+    BASEDATA_RESTRUCTURE_PATH="data/crunchbase_data/restructure_data/restructure_company_info.json" #清洗与重构后的基础数据路径
     TOP_K=5 #向量检索top_k
     SEARCH_SIZE=10 #文献检索返回数量
     TAVILY_NUM=3 #Tavily文献检索返回数量
@@ -47,6 +47,13 @@ class Config:
     SEC_EDGAR_USER_AGENT="Trina Solar,m6qdum90f@zzzz.lingeringp.com"
     
     # Rerank 配置
-    RERANK_MODEL = "BAAI/bge-reranker-large"  # BGE Reranker 模型
+    RERANK_MODEL = "BAAI/bge-reranker-v2-m3"  # BGE Reranker 模型名称
+    RERANK_BASE_URL = os.getenv("RERANK_BASE_URL", "http://localhost:8080")  # TEI rerank API 地址
+    RERANK_API_KEY = os.getenv("RERANK_API_KEY", "EMPTY")  # TEI API Key（如果不需要可以设为 EMPTY）
     RERANK_THRESHOLD = 0.5  # Rerank 分数阈值
     RERANK_TOP_N = 20  # Rerank 后保留的文档数量
+    RERANK_BATCH_SIZE = 32  # Rerank 批处理大小
+    RERANK_MAX_CONCURRENT = 5  # Rerank 最大并发请求数
+    
+    # 需要进行清洗和 Rerank 的数据源
+    PAPER_CLEAN = ["openalex", "semantic_scholar"]

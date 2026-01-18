@@ -2,7 +2,7 @@ import os
 import logging
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 from langchain_openai import ChatOpenAI,OpenAIEmbeddings
-from config import Config
+from core.config import Config
 from dotenv import load_dotenv
 
 # # 设置日志基本配置，级别为DEBUG或INFO

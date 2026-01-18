@@ -5,7 +5,7 @@ from llama_index.embeddings.zhipuai import ZhipuAIEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core import Document
 from chromadb import PersistentClient
-from config import Config
+from core.config import Config
 import os,json,logging,pandas as pd
 from pathlib import Path
 from concurrent_log_handler import ConcurrentRotatingFileHandler
