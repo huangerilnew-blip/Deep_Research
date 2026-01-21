@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from typing import List, Dict
-from tei_client import AsyncTeiClient
+from tei_client import HttpClient
 from core.config import Config
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 
@@ -40,8 +40,8 @@ class BGEReranker:
         """
         self.base_url = base_url or Config.RERANK_BASE_URL
         
-        # 创建 AsyncTeiClient
-        self.client = AsyncTeiClient(base_url=self.base_url)
+        # 创建 HttpClient (注意参数名是 url 而不是 base_url)
+        self.client = HttpClient(url=self.base_url)
         
         logger.info(f"初始化 BGEReranker: base_url={self.base_url}")
     
@@ -63,13 +63,13 @@ class BGEReranker:
         try:
             logger.info(f"开始异步 rerank，查询: {query[:50]}..., 文档数量: {len(documents)}")
             
-            # 使用 tei_client 的 rerank 方法（TEI 本身支持批量处理）
-            #返回的结果是[rerank(index:int=xx,score:int=xx)]
-            results = await self.client.rerank(query=query, texts=documents)
+            # 使用 tei_client 的 async_rerank 方法
+            # 返回的结果是 RerankResult 对象
+            result = await self.client.async_rerank(query=query, texts=documents)
             
             # 将结果转换为标准格式
             rerank_results = []
-            for item in results:
+            for item in result:
                 rerank_results.append({
                     "index": item.index,
                     "score": item.score

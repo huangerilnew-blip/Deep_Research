@@ -9,7 +9,7 @@ from typing import TypedDict, Annotated, List, Dict, Any
 from langgraph.graph import add_messages, StateGraph, START, END, state
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage,ToolMessage
-from langchain_core.messages import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
@@ -148,8 +148,8 @@ class ExecutorAgent:
     
     def __init__(self, pool: AsyncConnectionPool, modelname: ChatOpenAI = Config.LLM_EXECUTOR):
         self.chat_llm = get_llm(modelname)[0]
-        # 只获取搜索工具
-        self.search_tools: list[BaseTool] = self._get_search_tools()
+        # 搜索工具延迟加载
+        self.search_tools: list[BaseTool] = None
         # 下载工具单独获取
         self.download_tools: list[BaseTool] = None  # 延迟加载
         self.memory = AsyncPostgresSaver(pool)
@@ -160,12 +160,19 @@ class ExecutorAgent:
             max_concurrent=Config.RERANK_MAX_CONCURRENT
         )
         
-        self.graph = self._build_graph()
+        self.graph = None  # 延迟构建
     
-    def _get_search_tools(self) -> list[BaseTool]:
+    async def _ensure_initialized(self):
+        """确保异步资源已初始化"""
+        if self.search_tools is None:
+            self.search_tools = await self._get_search_tools()
+        if self.graph is None:
+            self.graph = self._build_graph()
+    
+    async def _get_search_tools(self) -> list[BaseTool]:
         """获取搜索工具（只包含 search 类工具）"""
         from core.tools import get_tools
-        return asyncio.run(get_tools(tool_type="search"))
+        return await get_tools(tool_type="search")
     
     async def _get_download_tools(self) -> list[BaseTool]:
         """获取下载工具（只包含 download 类工具）"""
@@ -707,6 +714,9 @@ class ExecutorAgent:
     
     async def invoke(self, query: str, thread_id: str) -> Dict:
         """执行单个子问题的完整处理流程"""
+        # 确保异步资源已初始化
+        await self._ensure_initialized()
+        
         config = {"configurable": {"thread_id": thread_id}}
         initial_state = {
             "executor_messages": [],

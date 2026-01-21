@@ -37,7 +37,11 @@ handler.setFormatter(logging.Formatter(
     "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 ))
 logger.addHandler(handler)
-load_dotenv()
+
+# 加载环境变量（指定 .env 文件路径）
+from pathlib import Path
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
 
 # 为工具添加人工审查（human-in-the-loop）功能
 async def add_human_in_the_loop(
@@ -138,15 +142,31 @@ async def get_tools(tool_type: str = "all") -> list[BaseTool]:
         list[BaseTool]: 工具列表
     """
     # MCP Server工具 - Paper Search
+    # 准备环境变量，确保所有必需的 key 都有值
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    semantic_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY") or os.getenv("SEMANTIC_API_KEY")
+    
+    # 验证必需的 API Key
+    if not tavily_key:
+        raise ValueError(
+            "TAVILY_API_KEY 未配置。请在 core/.env 文件中设置 TAVILY_API_KEY"
+        )
+    
+    if not semantic_key:
+        raise ValueError(
+            "SEMANTIC_SCHOLAR_API_KEY 未配置。请在 core/.env 文件中设置 SEMANTIC_API_KEY 或 SEMANTIC_SCHOLAR_API_KEY"
+        )
+    
+    logger.info(f"环境变量验证通过: TAVILY_API_KEY 和 SEMANTIC_SCHOLAR_API_KEY 已配置")
+    
     client = MultiServerMCPClient({
         "paper-search": {
             "command": "python",
             "args": ["-m", "core.mcp_server"],
             "cwd": os.path.dirname(os.path.dirname(__file__)),  # 项目根目录
             "env": {
-                "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY"),
-                "SEMANTIC_SCHOLAR_API_KEY": os.getenv("SEMANTIC_SCHOLAR_API_KEY"),
-                "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY")
+                "TAVILY_API_KEY": tavily_key,
+                "SEMANTIC_SCHOLAR_API_KEY": semantic_key
             },
             "transport": "stdio"
         }

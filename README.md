@@ -140,11 +140,14 @@ ExecutorAgent 对不同数据源采用差异化处理策略：
 
 ## build_vector_store
 - 功能:构建向量数据库
+- 向量数据库：chroma
+- 框架：llamaindex
 - 流程:
     - 使用mineru对pdf进行解析，提取文本内容
-    - 其他文档内容，如txt,md等，使用常规llamaindex方法进行处理
-    - 数据清洗
+    - crunchbase作为基础数据+markdown文件上层数据
     - 入库
 ## search_info
 - 功能:检索相关信息
-- 流程:
+- pre_questions:通过question_pool构建search目标
+- question_pool:由planner和markdown文件改写获得
+- 过滤：rerank+过滤

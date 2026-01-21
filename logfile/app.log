@@ -1,0 +1,118 @@
+2026-01-21 13:09:44,507 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:09:44,524 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 13:09:44,588 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:10:18,264 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:10:18,279 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 13:10:18,338 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:11:23,680 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:11:23,696 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 13:11:23,758 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:11:23,811 - core.reranker - INFO - 初始化 BGEReranker: base_url=http://localhost:8080
+2026-01-21 13:17:04,192 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:17:04,206 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 13:17:04,264 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:17:04,315 - core.reranker - INFO - 初始化 BGEReranker: base_url=http://localhost:8080
+2026-01-21 13:20:23,446 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:20:23,461 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 13:24:54,460 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 13:24:54,475 - agents.agents - INFO - 完成planner_graph的初始化构造
+2026-01-21 15:47:11,924 - core.vector_store_manager - INFO - 初始化本地 Embedding 模型: BAAI/bge-large-zh-v1.5
+2026-01-21 15:47:11,929 - core.vector_store_manager - INFO - vllm 服务地址: http://localhost:8001
+2026-01-21 15:47:48,251 - core.vector_store_manager - INFO - 初始化本地 Embedding 模型: BAAI/bge-large-zh-v1.5
+2026-01-21 15:47:48,254 - core.vector_store_manager - INFO - vllm 服务地址: http://localhost:8001
+2026-01-21 15:47:48,737 - core.vector_store_manager - INFO - 本地 Embedding 模型初始化完成（实际模型: BAAI/bge-large-zh-v1.5）
+2026-01-21 15:47:48,739 - core.vector_store_manager - INFO - 初始化 VectorStoreManager: persist_dir=vector_storage, collection=base_collection
+2026-01-21 15:52:24,048 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 15:52:24,053 - __main__ - INFO - 初始化 DocumentProcessor: mineru_url=http://localhost:8000, max_chunk_size=1000
+2026-01-21 15:58:24,976 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 15:58:25,032 - core.reranker - INFO - 初始化 BGEReranker: base_url=http://localhost:8080
+2026-01-21 15:58:25,035 - __main__ - DEBUG - 创建 ExecutorAgent 1/3
+2026-01-21 15:58:25,089 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 15:58:25,142 - core.reranker - INFO - 初始化 BGEReranker: base_url=http://localhost:8080
+2026-01-21 15:58:25,143 - __main__ - DEBUG - 创建 ExecutorAgent 2/3
+2026-01-21 15:58:25,197 - core.llms - INFO - 成功初始化 qwen LLM
+2026-01-21 15:58:25,248 - core.reranker - INFO - 初始化 BGEReranker: base_url=http://localhost:8080
+2026-01-21 15:58:25,249 - __main__ - DEBUG - 创建 ExecutorAgent 3/3
+2026-01-21 15:58:25,250 - __main__ - INFO - 成功创建 3 个 ExecutorAgent 实例
+2026-01-21 15:58:25,251 - __main__ - INFO - 初始化 ExecutorAgentPool: pool_size=3, model=qwen
+2026-01-21 16:25:40,757 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:40,768 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:41,068 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:41,071 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:41,181 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:41,183 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:25:41,272 - core.vector_store_manager - INFO - 初始化本地 Embedding 模型: BAAI/bge-large-zh-v1.5
+2026-01-21 16:25:41,274 - core.vector_store_manager - INFO - vllm 服务地址: http://localhost:8001
+2026-01-21 16:25:41,330 - core.vector_store_manager - INFO - 本地 Embedding 模型初始化完成（实际模型: BAAI/bge-large-zh-v1.5）
+2026-01-21 16:25:41,333 - core.vector_store_manager - INFO - 初始化 VectorStoreManager: persist_dir=vector_storage, collection=base_collection
+2026-01-21 16:25:41,335 - core.vector_store_manager - INFO - 开始加载基础向量库: data/crunchbase_data/restructure_data/restructure_company_info.json
+2026-01-21 16:25:43,056 - core.vector_store_manager - INFO - 从 data/crunchbase_data/restructure_data/restructure_company_info.json 加载了 38276 个文档
+2026-01-21 16:25:43,068 - core.vector_store_manager - INFO - 创建向量存储目录: vector_storage
+2026-01-21 16:25:43,420 - core.vector_store_manager - INFO - 开始构建向量索引，文档数量: 38276
+2026-01-21 16:27:39,570 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:27:39,573 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,347 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,356 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,673 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,676 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,786 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,788 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:34:30,880 - core.vector_store_manager - INFO - 初始化本地 Embedding 模型: BAAI/bge-large-zh-v1.5
+2026-01-21 16:34:30,882 - core.vector_store_manager - INFO - vllm 服务地址: http://localhost:8001
+2026-01-21 16:34:30,921 - core.vector_store_manager - INFO - 本地 Embedding 模型初始化完成（实际模型: BAAI/bge-large-zh-v1.5）
+2026-01-21 16:34:30,924 - core.vector_store_manager - INFO - 初始化 VectorStoreManager: persist_dir=vector_storage, collection=base_collection
+2026-01-21 16:34:30,927 - core.vector_store_manager - INFO - 开始加载基础向量库: data/crunchbase_data/restructure_data/restructure_company_info.json
+2026-01-21 16:34:32,650 - core.vector_store_manager - INFO - 从 data/crunchbase_data/restructure_data/restructure_company_info.json 加载了 38276 个文档
+2026-01-21 16:34:32,866 - core.vector_store_manager - INFO - 开始构建向量索引，文档数量: 38276
+2026-01-21 16:36:26,819 - core.llms - ERROR - LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:36:26,822 - core.llms - WARNING - 使用默认配置重试: LLM配置错误: 1 validation error for ChatOpenAI
+model
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/string_type
+2026-01-21 16:54:12,568 - __main__ - INFO - 初始化本地 Embedding 模型: BAAI/bge-large-zh-v1.5
+2026-01-21 16:54:12,572 - __main__ - INFO - vllm 服务地址: http://localhost:8001

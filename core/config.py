@@ -48,8 +48,8 @@ class Config:
     
     # Rerank 配置
     RERANK_MODEL = "BAAI/bge-reranker-v2-m3"  # BGE Reranker 模型名称
-    RERANK_BASE_URL = os.getenv("RERANK_BASE_URL", "http://localhost:8080")  # TEI rerank API 地址
-    RERANK_API_KEY = os.getenv("RERANK_API_KEY", "EMPTY")  # TEI API Key（如果不需要可以设为 EMPTY）
+    RERANK_BASE_URL ="http://localhost:8080"  # TEI rerank API 地址
+    RERANK_API_KEY = "EMPTY")  # TEI API Key（如果不需要可以设为 EMPTY）
     RERANK_THRESHOLD = 0.5  # Rerank 分数阈值
     RERANK_TOP_N = 20  # Rerank 后保留的文档数量
     RERANK_BATCH_SIZE = 32  # Rerank 批处理大小
@@ -57,3 +57,12 @@ class Config:
     
     # 需要进行清洗和 Rerank 的数据源
     PAPER_CLEAN = ["openalex", "semantic_scholar"]
+    
+    # MultiAgent 配置
+    EXECUTOR_POOL_SIZE = 3  # ExecutorAgent 池大小，默认 3
+    MAX_CHUNK_SIZE = 1000  # Markdown 切割最大长度，默认 1000 字符
+    
+    # 文档处理配置
+    MINERU_BASE_URL = "http://localhost:8080"  # MinerU 服务地址
+    VLLM_BASE_URL =  "http://localhost:8001"  # vllm Embedding 服务地址
+    EMBEDDING_MODEL_NAME = "BAAI/bge-large-zh-v1.5"  # Embedding 模型名称
