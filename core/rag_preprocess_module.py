@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-向量存储管理器
-负责管理 Chroma 向量数据库，支持基础数据加载和增量更新
+RAG 检索前处理模块
+负责在基础向量数据库上添加textnodes
 """
 
 import os
@@ -15,8 +15,9 @@ from concurrent_log_handler import ConcurrentRotatingFileHandler
 from llama_index.core import VectorStoreIndex, Document, Settings, StorageContext
 from llama_index.embeddings.zhipuai import ZhipuAIEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.core.schema import BaseEmbedding, BaseNode
 from chromadb import PersistentClient
-
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from core.config import Config
 
 # 设置日志
@@ -37,7 +38,7 @@ logger.addHandler(handler)
 
 
 class VectorStoreManager:
-    """向量存储管理器
+    """RAG 检索前处理模块
     
     管理 Chroma 向量数据库，支持基础数据加载和增量更新
     使用本地 vllm 部署的 Embedding 模型
@@ -45,9 +46,9 @@ class VectorStoreManager:
     
     def __init__(
         self,
+        embedding_model: BaseEmbedding,
         persist_dir: str = Config.VECTOR_STORE_PATH,
-        collection_name: str = Config.VECTTOR_BASE_COLLECTION_NAME,
-        embedding_model = None
+        collection_name: str = Config.VECTTOR_BASE_COLLECTION_NAME
     ):
         """初始化向量存储管理器
         
@@ -59,6 +60,7 @@ class VectorStoreManager:
         self.persist_dir = persist_dir
         self.collection_name = collection_name
         self.embedding_model = embedding_model or self._get_local_embedding_model()
+        # self.embedding_model = embedding_model
         self.chroma_client = None
         self.vector_store = None
         self.index = None
@@ -73,53 +75,55 @@ class VectorStoreManager:
         2. 否则使用 ZhipuAI Embedding（与现有代码保持一致）
         3. 如果都不可用，回退到本地 HuggingFace 模型
         """
-        logger.info(f"初始化 Embedding 模型: {Config.EMBEDDING_MODEL_NAME}")
-        
-        # 优先使用 ZhipuAI（与现有代码保持一致）
-        try:
-            zhipu_api_key = os.getenv("ZHIPU_API_KEY")
-            if zhipu_api_key:
-                logger.info("使用 ZhipuAI Embedding 模型")
-                embedding_model = ZhipuAIEmbedding(
-                    model="embedding-2",
-                    api_key=zhipu_api_key
-                )
-                Settings.embed_model = embedding_model
-                logger.info("ZhipuAI Embedding 模型初始化完成")
-                return embedding_model
-        except Exception as e:
-            logger.warning(f"ZhipuAI Embedding 初始化失败: {e}")
-        
-        # 尝试使用本地 vllm/TEI 服务
-        if Config.VLLM_BASE_URL and Config.VLLM_BASE_URL != "http://localhost:8001":
+        logger.info(f"尝试初始化 Embedding 模型: {Config.EMBEDDING_MODEL_NAME}")
+        # 优先使用本地 vllm/TEI 服务
+        if Config.VLLM_BASE_URL :
             try:
-                from llama_index.embeddings.text_embeddings_inference import TextEmbeddingsInference
+                
                 
                 logger.info(f"尝试连接本地 vllm 服务: {Config.VLLM_BASE_URL}")
-                embedding_model = TextEmbeddingsInference(
+                embedding_model = OpenAILikeEmbedding(
                     base_url=Config.VLLM_BASE_URL,
                     model_name=Config.EMBEDDING_MODEL_NAME,
-                    timeout=60,
+                    timeout=30,
                     embed_batch_size=10
                 )
                 
-                Settings.embed_model = embedding_model
+                Settings.embed_model = embedding_model ## 这里将会构造一个全局的embedding（llamaindex的框架代码）
                 logger.info("本地 vllm Embedding 服务连接成功")
                 return embedding_model
                 
             except Exception as e:
                 logger.warning(f"连接本地 vllm 服务失败: {e}")
+
+
+        # 其次使用 ZhipuAI（与现有代码保持一致）
+        # try:
+        #     zhipu_api_key = os.getenv("ZHIPU_API_KEY")
+        #     if zhipu_api_key:
+        #         logger.info("使用 ZhipuAI Embedding 模型")
+        #         embedding_model = ZhipuAIEmbedding(
+        #             model="embedding-2",
+        #             api_key=zhipu_api_key
+        #         )
+        #         Settings.embed_model = embedding_model
+        #         logger.info("ZhipuAI Embedding 模型初始化完成")
+        #         return embedding_model
+        # except Exception as e:
+        #     logger.warning(f"ZhipuAI Embedding 初始化失败: {e}")
         
-        # 回退到本地 HuggingFace 模型
-        logger.info(f"使用本地 HuggingFace 模型: {Config.EMBEDDING_MODEL_NAME}")
-        embedding_model = HuggingFaceEmbedding(
-            model_name=Config.EMBEDDING_MODEL_NAME
-        )
+
         
-        Settings.embed_model = embedding_model
-        logger.info("HuggingFace Embedding 模型初始化完成")
+        # # 回退到本地 HuggingFace 模型
+        # logger.info(f"使用本地 HuggingFace 模型: {Config.EMBEDDING_MODEL_NAME}")
+        # embedding_model = HuggingFaceEmbedding(
+        #     model_name=Config.EMBEDDING_MODEL_NAME
+        # )
         
-        return embedding_model
+        # Settings.embed_model = embedding_model
+        # logger.info("HuggingFace Embedding 模型初始化完成")
+        
+        # return embedding_model
     
     def _load_json_documents(self, json_path: str) -> List[Document]:
         """从 JSON 文件加载文档
@@ -167,11 +171,11 @@ class VectorStoreManager:
             
         except Exception as e:
             logger.error(f"加载 JSON 文件失败: {e}")
-            raise
+            raise e
         
         return documents
     
-    def load_base_vector_store(
+    def built_base_vector_store(
         self,
         base_data_path: str = Config.BASEDATA_RESTRUCTURE_PATH,
         force_reload: bool = False
@@ -246,36 +250,95 @@ class VectorStoreManager:
         
         return self.index
     
-    def add_documents(
+    def add_nodes(
         self,
-        documents: List[Document]
+        nodes: List[BaseNode]
     ) -> VectorStoreIndex:
         """向现有向量库添加新文档
         
         Args:
-            documents: LlamaIndex Document 列表
+             nodes: LlamaIndex TextNode 列表
             
         Returns:
             更新后的 VectorStoreIndex
         """
-        if not documents:
+        if not  nodes:
             logger.warning("没有文档需要添加")
             return self.index
         
-        logger.info(f"开始添加 {len(documents)} 个新文档到向量库")
+        logger.info(f"开始添加 {len(nodes)} 个新文档到向量库")
         
-        # 如果索引未初始化，先加载基础向量库
+        # 如果索引未初始化，先尝试加载或构建向量库
         if self.index is None:
-            logger.info("索引未初始化，先加载基础向量库")
-            self.load_base_vector_store()
+            logger.info("索引未初始化，尝试加载或构建向量库")
+            self._load_or_build_index()
         
         # 添加文档到索引
-        for doc in documents:
-            self.index.insert(doc)
+            self.index.insert_nodes(nodes)
         
         # 持久化
         self.index.storage_context.persist(persist_dir=self.persist_dir)
-        logger.info(f"成功添加 {len(documents)} 个文档并持久化")
+        logger.info(f"成功添加 {len( nodes)} 个node并持久化")
+        
+        return self.index
+    
+    def _load_or_build_index(self) -> VectorStoreIndex:
+        """智能加载或构建向量索引
+        
+        判断本地是否已存在向量库：
+        - 如果存在且有数据，则直接加载
+        - 如果不存在或为空，则构建基础向量库
+        
+        Returns:
+            VectorStoreIndex 实例
+        """
+        logger.info("检查本地向量库是否存在")
+        
+        # 检查持久化目录和 Chroma 数据库文件是否存在
+        vector_db_exists = os.path.exists(self.persist_dir)
+        chroma_db_file = os.path.join(self.persist_dir, "chroma.sqlite3")
+        has_chroma_db = os.path.exists(chroma_db_file)
+        
+        logger.info(f"向量库目录存在: {vector_db_exists}, Chroma 数据库存在: {has_chroma_db}")
+        
+        # 如果目录和数据库文件都存在，尝试加载现有数据
+        if vector_db_exists and has_chroma_db:
+            try:
+                logger.info("检测到本地向量库，尝试加载")
+                
+                # 初始化 Chroma 客户端
+                self.chroma_client = PersistentClient(path=self.persist_dir)
+                
+                # 尝试获取集合
+                try:
+                    collection = self.chroma_client.get_collection(self.collection_name)
+                    collection_count = collection.count()
+                    logger.info(f"找到集合 '{self.collection_name}'，包含 {collection_count} 个文档")
+                    
+                    # 如果集合有数据，直接加载
+                    if collection_count > 0:
+                        logger.info("从现有向量库加载索引")
+                        self.vector_store = ChromaVectorStore(chroma_collection=collection)
+                        storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+                        self.index = VectorStoreIndex.from_vector_store(
+                            vector_store=self.vector_store,
+                            storage_context=storage_context
+                        )
+                        logger.info("成功从本地加载向量索引")
+                        return self.index
+                    else:
+                        logger.info("集合为空，需要构建基础向量库")
+                except Exception as e:
+                    logger.info(f"集合 '{self.collection_name}' 不存在: {e}，需要构建基础向量库")
+                    
+            except Exception as e:
+                logger.warning(f"加载本地向量库失败: {e}，将尝试构建基础向量库")
+        else:
+            logger.info("本地向量库不存在，需要构建基础向量库")
+        
+        # 如果无法加载现有数据，则构建基础向量库
+        logger.info("开始构建基础向量库")
+        self.built_base_vector_store()
         
         return self.index
     
@@ -290,27 +353,12 @@ class VectorStoreManager:
         """
         if self.index is None:
             logger.error("索引未初始化，无法创建检索器")
-            raise ValueError("索引未初始化，请先调用 load_base_vector_store()")
+            raise ValueError("索引未初始化，请先调用 built_base_vector_store()")
         
         retriever = self.index.as_retriever(similarity_top_k=top_k)
         logger.info(f"创建检索器，top_k={top_k}")
         
         return retriever
-    
-    def get_query_engine(self):
-        """获取查询引擎
-        
-        Returns:
-            查询引擎实例
-        """
-        if self.index is None:
-            logger.error("索引未初始化，无法创建查询引擎")
-            raise ValueError("索引未初始化，请先调用 load_base_vector_store()")
-        
-        query_engine = self.index.as_query_engine()
-        logger.info("创建查询引擎")
-        
-        return query_engine
     
     def get_stats(self) -> dict:
         """获取向量库统计信息
@@ -356,7 +404,7 @@ if __name__ == "__main__":
         
         # 加载基础向量库
         print(f"\n正在加载基础向量库...")
-        index = manager.load_base_vector_store()
+        index = manager.built_base_vector_store()
         print(f"✓ 基础向量库加载成功")
         
         # 显示加载后的统计信息

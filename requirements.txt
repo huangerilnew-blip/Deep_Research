@@ -12,6 +12,13 @@ langchain-openai>=0.0.5
 langgraph>=0.0.20
 langgraph-checkpoint-postgres>=1.0.0
 
+# LlamaIndex 核心库和扩展
+llama-index>=0.9.0
+llama-index-core>=0.9.0
+llama-index-embeddings-openai>=0.1.0
+llama-index-vector-stores-chroma>=0.1.0
+llama-index-readers-file>=0.1.0  # MarkdownReader
+
 # ============================================
 # LLM 和 Embedding
 # ============================================
@@ -23,12 +30,6 @@ openai>=1.0.0
 # ============================================
 # Chroma 向量数据库
 chromadb>=0.4.0
-
-# LlamaIndex 核心组件（用于向量存储和 RAG）
-llama-index>=0.9.0
-llama-index-core>=0.9.0
-llama-index-embeddings-openai>=0.1.0
-llama-index-vector-stores-chroma>=0.1.0
 
 # ============================================
 # 数据库
@@ -59,7 +60,6 @@ pydantic>=2.0.0
 # ============================================
 # 异步 HTTP 客户端
 httpx>=0.24.0
-aiohttp>=3.9.0
 
 # ============================================
 # 工具和搜索
@@ -79,8 +79,8 @@ akshare>=1.12.0
 # ============================================
 # 文档处理
 # ============================================
-# PDF 处理（MinerU）
-magic-pdf>=0.6.0
+# MinerU 客户端（用于 PDF 转 Markdown）
+mineru-vl-utils>=0.1.0
 
 # Markdown 处理
 markdown>=3.5.0

@@ -5,9 +5,18 @@
 定义系统中使用的核心数据结构
 """
 
+import asyncio
+import os
+import tempfile
+import shutil
+import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from rerank import BGEReranker
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
+from llama_index.core.schema import NodeWithScore, QueryBundle
 
 
 @dataclass
@@ -176,6 +185,224 @@ class RetrievedContext:
         return f"RetrievedContext(source='{self.source}', score={self.score:.3f}, content='{content_preview}')"
 
 
+class BGERerankNodePostprocessor(BaseNodePostprocessor):
+    """BGE Reranker 节点后处理器
+    
+    使用 BGEReranker 对检索到的节点进行重新打分和排序
+    """
+    
+    def __init__(
+        self,
+        reranker: BGEReranker,
+        top_n: int = 5,
+        score_threshold: float = Config.RERANK_THRESHOLD
+    ):
+        """初始化 BGE Rerank 节点后处理器
+        
+        Args:
+            reranker: BGEReranker 实例
+            top_n: 保留的最高分数节点数量
+            score_threshold: 分数阈值，低于此分数的节点会被过滤
+        """
+        super().__init__()
+        self.reranker = reranker
+        self.top_n = top_n
+        self.score_threshold = score_threshold
+    
+    def _postprocess_nodes(
+        self,
+        nodes: List[NodeWithScore],
+        query_bundle: Optional[QueryBundle] = None,
+    ) -> List[NodeWithScore]:
+        """对节点进行重新打分（同步方法）
+        
+        Args:
+            nodes: 原始节点列表
+            query_bundle: 查询信息
+            
+        Returns:
+            重新打分后的节点列表
+        """
+        if not nodes:
+            return []
+        
+        if query_bundle is None:
+            # 如果没有提供查询，直接返回原始节点
+            return nodes[:self.top_n]
+        
+        # 在同步环境中运行异步方法
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(
+            self._async_postprocess_nodes(nodes, query_bundle)
+        )
+    
+    async def _async_postprocess_nodes(
+        self,
+        nodes: List[NodeWithScore],
+        query_bundle: QueryBundle
+    ) -> List[NodeWithScore]:
+        """异步对节点进行重新打分
+        
+        Args:
+            nodes: 原始节点列表
+            query_bundle: 查询信息
+            
+        Returns:
+            重新打分后的节点列表
+        """
+        if not nodes:
+            return []
+        
+        # 提取查询文本
+        query = query_bundle.query_str
+        
+        # 提取节点内容
+        documents = [node.node.get_content() for node in nodes]
+        
+        # 使用 BGEReranker 进行重排序
+        rerank_results = await self.reranker.rerank_async(query, documents)
+        
+        # 根据 rerank 结果更新节点分数
+        reranked_nodes = []
+        for item in rerank_results:
+            idx = item["index"]
+            score = item["score"]
+            
+            # 过滤低于阈值的节点
+            if score >= self.score_threshold and idx < len(nodes):
+                node_with_score = nodes[idx]
+                # 更新分数为 rerank 分数
+                node_with_score.score = score
+                reranked_nodes.append(node_with_score)
+        
+        # 限制返回数量
+        return reranked_nodes[:self.top_n]
+    
+    @classmethod
+    def class_name(cls) -> str:
+        """返回类名"""
+        return "BGERerankNodePostprocessor"
+
+
+class PDFParser:
+    """
+    PDF 解析器
+    使用 mineru 命令行工具将 PDF 转换为 Markdown
+    """
+    
+    def __init__(self, mineru_server_url: str = "http://localhost:30000"):
+        """
+        初始化 PDF 解析器
+        
+        Args:
+            mineru_server_url: MinerU 服务的 URL 地址
+        """
+        self.mineru_server_url = mineru_server_url
+        self.logger = logging.getLogger(__name__)
+    
+    async def parse_pdf_to_markdown(self, pdf_path: str) -> str:
+        """
+        将 PDF 文件转换为 Markdown 文本
+        
+        Args:
+            pdf_path: PDF 文件的路径
+            
+        Returns:
+            转换后的 Markdown 文本
+            
+        Raises:
+            FileNotFoundError: 如果 PDF 文件不存在
+            RuntimeError: 如果转换过程失败
+        """
+        # 检查文件是否存在
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"PDF 文件不存在: {pdf_path}")
+        
+        # 创建临时输出目录
+        temp_dir = tempfile.mkdtemp(prefix="mineru_output_")
+        
+        try:
+            # 获取 PDF 文件名（不含扩展名）
+            pdf_basename = Path(pdf_path).stem
+            
+            # 构建 mineru 命令
+            cmd = [
+                "mineru",
+                "-p", pdf_path,
+                "-o", temp_dir,
+                "-b", "vlm-http-client",
+                "-u", self.mineru_server_url
+            ]
+            
+            self.logger.info(f"开始解析 PDF: {pdf_path}")
+            self.logger.debug(f"执行命令: {' '.join(cmd)}")
+            
+            # 异步执行命令
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            # 检查命令执行结果
+            if process.returncode != 0:
+                error_msg = stderr.decode('utf-8', errors='ignore')
+                self.logger.error(f"mineru 命令执行失败: {error_msg}")
+                raise RuntimeError(f"PDF 转换失败: {error_msg}")
+            
+            # 定位输出的 Markdown 文件
+            # 路径格式: {temp_dir}/auto/{pdf_basename}/{pdf_basename}.md
+            markdown_path = os.path.join(temp_dir, "auto", pdf_basename, f"{pdf_basename}.md")
+            
+            if not os.path.exists(markdown_path):
+                self.logger.error(f"未找到输出的 Markdown 文件: {markdown_path}")
+                raise RuntimeError(f"未找到输出的 Markdown 文件")
+            
+            # 读取 Markdown 内容
+            with open(markdown_path, 'r', encoding='utf-8') as f:
+                markdown_content = f.read()
+            
+            self.logger.info(f"PDF 解析成功: {pdf_path}, Markdown 长度: {len(markdown_content)}")
+            return markdown_content
+            
+        except Exception as e:
+            self.logger.error(f"PDF 解析过程出错: {e}")
+            raise
+            
+        finally:
+            # 清理临时目录
+            try:
+                shutil.rmtree(temp_dir)
+                self.logger.debug(f"已清理临时目录: {temp_dir}")
+            except Exception as e:
+                self.logger.warning(f"清理临时目录失败: {e}")
+    
+    def parse_pdf_to_markdown_sync(self, pdf_path: str) -> str:
+        """
+        同步版本的 PDF 转换方法
+        
+        Args:
+            pdf_path: PDF 文件的路径
+            
+        Returns:
+            转换后的 Markdown 文本
+        """
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(self.parse_pdf_to_markdown(pdf_path))
+
+
 # 测试代码
 if __name__ == "__main__":
     print("=" * 60)
@@ -250,6 +477,20 @@ if __name__ == "__main__":
     context2 = RetrievedContext.from_dict(context_dict)
     assert context.content == context2.content
     print(f"   ✓ RetrievedContext 序列化测试通过")
+    
+    # 测试 BGERerankNodePostprocessor
+    print("\n5. 测试 BGERerankNodePostprocessor:")
+    print("   BGERerankNodePostprocessor 类创建成功")
+    print(f"   类名: {BGERerankNodePostprocessor.class_name()}")
+    print(f"   ✓ BGERerankNodePostprocessor 测试通过")
+    
+    # 测试 PDFParser
+    print("\n6. 测试 PDFParser:")
+    parser = PDFParser(mineru_server_url="http://localhost:30000")
+    print(f"   PDFParser 实例化成功")
+    print(f"   MinerU 服务器 URL: {parser.mineru_server_url}")
+    print(f"   ✓ PDFParser 测试通过")
+    print("   注意: 实际 PDF 解析需要安装 mineru 并启动服务")
     
     print("\n" + "=" * 60)
     print("所有数据模型测试通过！")

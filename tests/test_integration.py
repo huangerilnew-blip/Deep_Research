@@ -16,7 +16,7 @@ from langchain_core.messages import AIMessage
 
 from agents.multi_agent import MultiAgent
 from agents.executor_pool import ExecutorAgentPool
-from core.vector_store_manager import VectorStoreManager
+from core.rag_preprocess_module import VectorStoreManager
 from core.models import QuestionsPool
 from core.config import Config
 

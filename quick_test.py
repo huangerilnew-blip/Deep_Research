@@ -37,7 +37,7 @@ except Exception as e:
 # 测试向量存储管理器
 print("\n3. 测试向量存储管理器...")
 try:
-    from core.vector_store_manager import VectorStoreManager
+    from core.rag_preprocess_module import VectorStoreManager
     print(f"   ✓ VectorStoreManager 导入成功")
 except Exception as e:
     print(f"   ✗ VectorStoreManager 导入失败: {e}")

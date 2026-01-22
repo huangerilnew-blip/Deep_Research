@@ -17,7 +17,7 @@ from concurrent_log_handler import ConcurrentRotatingFileHandler
 
 from agents.agents import PlannerAgent
 from agents.executor_pool import ExecutorAgentPool
-from core.vector_store_manager import VectorStoreManager
+from core.rag_preprocess_module import VectorStoreManager
 from core.document_processor import DocumentProcessor
 from core.rag_module import RAGModule
 from core.models import QuestionsPool
@@ -130,7 +130,7 @@ class MultiAgent:
             
             # 6. 处理文档（PDF 转 Markdown、切割、问题改写）
             if all_documents:
-                llama_docs, rewritten_questions = await self.document_processor.process_documents(
+                llama_docs, rewritten_questions = await self.document_processor.get_nodes(
                     all_documents
                 )
                 logger.info(f"文档处理完成: {len(llama_docs)} 个片段, {len(rewritten_questions)} 个改写问题")
@@ -150,7 +150,7 @@ class MultiAgent:
                 llm=self.llm
             )
             
-            result = await rag_module.retrieve_and_generate(
+            result = await rag_module.retrieve(
                 questions_pool=questions_pool.get_all_questions(),
                 original_query=user_query
             )

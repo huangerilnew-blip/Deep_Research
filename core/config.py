@@ -34,7 +34,7 @@ class Config:
     # 向量存储和文档路径配置
     DOC_SAVE_PATH="data/downloads" # 网站下载的文档存储路径
     VECTOR_STORE_PATH="vector_storage" # 向量存储路径
-    VECTTOR_BASE_COLLECTION_NAME="base_collection" #基础向量集合名称
+    VECTTOR_BASE_COLLECTION_NAME="base_crunchbase_collection" #基础向量集合名称
     VECTTOR_BASEDATA_PATH="data/crunchbase_data" #基础数据路径
     VECTOR_DIM=1024 #向量维度
     BASEDATA_RESTRUCTURE_PATH="data/crunchbase_data/restructure_data/restructure_company_info.json" #清洗与重构后的基础数据路径
@@ -48,8 +48,8 @@ class Config:
     
     # Rerank 配置
     RERANK_MODEL = "BAAI/bge-reranker-v2-m3"  # BGE Reranker 模型名称
-    RERANK_BASE_URL ="http://localhost:8080"  # TEI rerank API 地址
-    RERANK_API_KEY = "EMPTY")  # TEI API Key（如果不需要可以设为 EMPTY）
+    RERANK_BASE_URL ="http://localhost:8100"  # TEI rerank API 地址
+    RERANK_API_KEY = "EMPTY"  # TEI API Key（如果不需要可以设为 EMPTY）
     RERANK_THRESHOLD = 0.5  # Rerank 分数阈值
     RERANK_TOP_N = 20  # Rerank 后保留的文档数量
     RERANK_BATCH_SIZE = 32  # Rerank 批处理大小
@@ -64,5 +64,5 @@ class Config:
     
     # 文档处理配置
     MINERU_BASE_URL = "http://localhost:8080"  # MinerU 服务地址
-    VLLM_BASE_URL =  "http://localhost:8001"  # vllm Embedding 服务地址
+    VLLM_BASE_URL =  "http://localhost:8081"  # vllm Embedding 服务地址
     EMBEDDING_MODEL_NAME = "BAAI/bge-large-zh-v1.5"  # Embedding 模型名称
