@@ -17,13 +17,13 @@ from concurrent_log_handler import ConcurrentRotatingFileHandler
 
 from agents.agents import PlannerAgent
 from agents.executor_pool import ExecutorAgentPool
-from core.rag_preprocess_module import VectorStoreManager
-from core.document_processor import DocumentProcessor
-from core.rag_module import RAGModule
-from core.models import QuestionsPool
-from core.config import Config
+from core.rag.rag_preprocess_module import VectorStoreManager
+from core.rag.document_processor import DocumentProcessor
+from core.rag.rag_postprocess_module import RAGPostProcessModule as RAGModule
+from core.rag.models import QuestionsPool, BGERerankNodePostprocessor
+from core.config.config import Config
 from core.llms import get_llm
-from core.reranker import BGEReranker
+from core.rag.reranker import BGEReranker
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -76,6 +76,13 @@ class MultiAgent:
         # LLM 和 Reranker
         self.llm = get_llm(executor_model)[0]
         self.reranker = BGEReranker()
+
+        # 创建 BGE Reranker 节点后处理器
+        self.node_postprocessor = BGERerankNodePostprocessor(
+            reranker=self.reranker,
+            top_n=Config.RERANK_TOP_N,
+            score_threshold=Config.RERANK_THRESHOLD
+        )
         
         # 文档处理器
         self.document_processor = DocumentProcessor(
@@ -130,43 +137,58 @@ class MultiAgent:
             
             # 6. 处理文档（PDF 转 Markdown、切割、问题改写）
             if all_documents:
-                llama_docs, rewritten_questions = await self.document_processor.get_nodes(
-                    all_documents
-                )
-                logger.info(f"文档处理完成: {len(llama_docs)} 个片段, {len(rewritten_questions)} 个改写问题")
-                
-                # 7. 更新 Questions Pool
-                questions_pool.add_rewritten_questions(rewritten_questions)
-                
-                # 8. 向量化并入库
+                llama_docs = await self.document_processor.get_nodes(all_documents)
+                logger.info(f"文档处理完成: {len(llama_docs)} 个片段")
+
+                # 向量化并入库
                 if llama_docs:
-                    self.vector_store_manager.add_documents(llama_docs)
+                    self.vector_store_manager.add_nodes(llama_docs)
                     logger.info(f"成功添加 {len(llama_docs)} 个文档到向量库")
-            
-            # 9. RAG 检索和生成
+
+            # 7. RAG 检索（只用 planner 子问题进行检索）
+            retriever = self.vector_store_index.as_retriever(similarity_top_k=Config.TOP_K)
             rag_module = RAGModule(
                 vector_store=self.vector_store_index,
-                reranker=self.reranker,
-                llm=self.llm
+                retriever=retriever,
+                node_postprocessor=self.node_postprocessor,
+                top_k=Config.TOP_K
             )
-            
-            result = await rag_module.retrieve(
-                questions_pool=questions_pool.get_all_questions(),
-                original_query=user_query
+
+            # 执行检索，获取去重后的节点
+            retrieved_nodes = await rag_module.retrieve_postprecess(
+                planner_questions=sub_questions
             )
-            
-            # 10. 构建返回结果
+
+            # 8. 从检索结果的 nodes 中提取 questions，构建 question_pool
+            retrieved_questions = self._extract_questions_from_nodes(retrieved_nodes)
+            logger.info(f"从检索结果中提取到 {len(retrieved_questions)} 个问题")
+
+            # question_pool = planner 子问题 + 检索结果中的 questions
+            questions_pool = QuestionsPool()
+            questions_pool.add_original_questions(sub_questions)
+            questions_pool.add_rewritten_questions(retrieved_questions)
+            logger.info(f"Question Pool 构建完成，共 {len(questions_pool)} 个问题")
+
+            # 10. 基于检索结果生成最终答案
+            answer = await self._generate_answer(
+                user_query=user_query,
+                sub_questions=sub_questions,
+                question_pool=question_pool,
+                retrieved_nodes=retrieved_nodes
+            )
+
+            # 11. 构建返回结果
             final_result = {
                 'query': user_query,
                 'sub_questions': sub_questions,
                 'rewritten_questions_count': len(questions_pool.rewritten_questions),
-                'total_questions': len(questions_pool),
+                'total_questions': len(question_pool),
                 'documents_processed': len(all_documents),
-                'answer': result['answer'],
+                'answer': answer,
                 'metadata': {
-                    'retrieved_count': result['retrieved_count'],
-                    'unique_count': result['unique_count'],
-                    'reranked_count': result['reranked_count']
+                    'retrieved_count': len(retrieved_nodes),
+                    'unique_count': len(retrieved_nodes),
+                    'reranked_count': len(retrieved_nodes)
                 }
             }
             
@@ -207,9 +229,11 @@ class MultiAgent:
         """
         try:
             # 调用 PlannerAgent
+            # 将 user_query 包装为 HumanMessage，与 agents.py 中的数据类型预期一致
+            from langchain_core.messages import HumanMessage
             config = {"configurable": {"thread_id": f"{thread_id}_planner"}}
             initial_state = {
-                "planner_messages": [user_query],
+                "planner_messages": [HumanMessage(content=user_query)],
                 "planner_result": None,
                 "epoch": 0
             }
@@ -240,6 +264,104 @@ class MultiAgent:
             logger.error(f"查询拆解失败: {e}")
             # 降级：返回原始查询
             return [user_query]
+
+    def _extract_questions_from_nodes(self, retrieved_nodes: list) -> List[str]:
+        """从检索结果的 nodes 中提取 metadata 中的 questions
+
+        Args:
+            retrieved_nodes: 检索到的 NodeWithScore 列表
+
+        Returns:
+            提取的问题列表（去重后）
+        """
+        questions_set = set()
+
+        for node_with_score in retrieved_nodes:
+            try:
+                metadata = node_with_score.node.metadata
+                if metadata and "questions" in metadata:
+                    questions = metadata["questions"]
+                    # questions 可能是字符串列表或单个字符串
+                    if isinstance(questions, list):
+                        for q in questions:
+                            if q and isinstance(q, str):
+                                questions_set.add(q.strip())
+                    elif isinstance(questions, str):
+                        questions_set.add(questions.strip())
+            except Exception as e:
+                logger.warning(f"提取节点问题时出错: {e}")
+                continue
+
+        return list(questions_set)
+
+    async def _generate_answer(
+        self,
+        user_query: str,
+        sub_questions: List[str],
+        question_pool: List[str],
+        retrieved_nodes: list
+    ) -> str:
+        """基于检索结果生成最终答案
+
+        Args:
+            user_query: 用户原始查询
+            sub_questions: Planner 生成的子问题
+            question_pool: 完整的问题池（包含改写问题）
+            retrieved_nodes: 检索到的节点列表
+
+        Returns:
+            生成的答案
+        """
+        try:
+            # 构建检索上下文
+            retrieved_contexts = []
+            for node_with_score in retrieved_nodes:
+                node = node_with_score.node
+                metadata = node.metadata
+                source = metadata.get('file_name', metadata.get('source', 'Unknown'))
+                content = node.get_content()
+
+                # 截断过长内容
+                if len(content) > 500:
+                    content = content[:500] + "..."
+
+                retrieved_contexts.append(f"来源: {source}\n内容: {content}\n")
+
+            contexts_str = "\n".join(retrieved_contexts)
+            questions_str = "\n".join([f"- {q}" for q in question_pool])
+
+            # 构建提示词
+            prompt = f"""你是一个专业的研究助手。基于以下信息回答用户的问题。
+
+用户问题：
+{user_query}
+
+相关子问题：
+{questions_str}
+
+检索到的相关信息：
+{contexts_str}
+
+要求：
+1. 回答应该全面且准确
+2. 引用具体的来源信息
+3. 如果信息不足，明确说明
+4. 使用清晰的结构组织回答
+
+回答："""
+
+            # 调用 LLM 生成答案
+            response = await self.llm.ainvoke(prompt)
+            answer = response.content if hasattr(response, 'content') else str(response)
+
+            logger.info(f"答案生成完成，长度: {len(answer)} 字符")
+            return answer
+
+        except Exception as e:
+            logger.error(f"生成答案失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"抱歉，生成答案时出现错误: {str(e)}"
     
     async def _cleanup(self):
         """清理资源"""

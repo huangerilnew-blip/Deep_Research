@@ -1,0 +1,10 @@
+- query->planner：生成了大量的子问题
+- planner->executor:经过工作流，对子问题进行检索，获得pdf和markdown文件，存入path
+    - 其中还要对检索出来的结果（list[paper]）进行清洗，有用的才会放入path中保存
+- 将 path进行预处理 返回list[dict]
+- list[dict]进行处理，使用llamaindex框架，mineru模型将文档切割为list[BaseNode] （document_process.py）
+- 基于crunchbase 数据（对csv文件进行清洗、重构之后的json文件），添加list[BaseNode],完成向量数据库的构建(rag_preprocess_module.py)
+    - 基本方法：从本地的chromadb进行加载，加载为index，然后添加list[BaseNode]
+- 使用构建好的向量数据库（index or retriever）进行检索、重排序和过滤，获得相关语料(rag_postprocess_module.py)
+- 进行最终回答的生成
+- 评价：如果回答效果不好进行重新生成或者重新的检索+生成，如果评价好就直接输出

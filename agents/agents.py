@@ -641,43 +641,60 @@ class ExecutorAgent:
                 papers_by_source[source] = []
             papers_by_source[source].append(paper)
         
-        # 按 source 调用相应的下载工具
-        for source, papers in papers_by_source.items():
+        # 并发调用所有数据源的下载工具
+        async def download_source(source: str, papers: list, download_tools: list) -> list:
+            """并发下载单个数据源的文档"""
             try:
                 logger.info(f"开始下载 {source} 的 {len(papers)} 篇文档到 {Config.DOC_SAVE_PATH}")
-                
+
                 download_tool_name = f"{source}_download"
                 download_tool = next((t for t in download_tools if download_tool_name in t.name.lower()), None)
-                
+
                 if download_tool:
                     result = await download_tool.ainvoke({
                         "papers": papers,
                         "save_path": Config.DOC_SAVE_PATH
                     })
-                    
+
                     if result:
                         if isinstance(result, str):
                             try:
                                 downloaded = json.loads(result)
                             except json.JSONDecodeError as e:
                                 logger.error(f"解析下载结果 JSON 失败: {e}")
-                                continue
+                                return []
                         elif isinstance(result, list):
                             downloaded = result
                         else:
                             logger.warning(f"未知的下载结果类型: {type(result)}")
-                            continue
-                        
+                            return []
+
                         if isinstance(downloaded, list):
-                            downloaded_papers.extend(downloaded)
                             logger.info(f"成功下载 {len(downloaded)} 篇 {source} 文档")
+                            return downloaded
                 else:
                     logger.warning(f"未找到 {source} 的下载工具")
-            
+
             except Exception as e:
                 logger.error(f"下载 {source} 文档时出错: {e}")
                 import traceback
                 traceback.print_exc()
+
+            return []
+
+        # 并发执行所有下载任务
+        tasks = [
+            download_source(source, papers, download_tools)
+            for source, papers in papers_by_source.items()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 合并结果
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"下载任务异常: {result}")
+            elif isinstance(result, list):
+                downloaded_papers.extend(result)
         
         logger.info(f"下载完成，共下载 {len(downloaded_papers)} 篇文档")
         return {"downloaded_papers": downloaded_papers}

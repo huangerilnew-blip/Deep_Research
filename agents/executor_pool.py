@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.agents import ExecutorAgent
 from core.config import Config
+from langchain_core.messages import HumanMessage
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -78,40 +79,42 @@ class ExecutorAgentPool:
         base_thread_id: str
     ) -> List[Dict]:
         """并发执行多个子问题
-        
+
         Args:
             questions: 子问题列表
             base_thread_id: 基础线程 ID
-            
+
         Returns:
             所有 ExecutorAgent 的结果列表
         """
         if not questions:
             logger.warning("没有子问题需要执行")
             return []
-        
+
         logger.info(f"开始并发执行 {len(questions)} 个子问题")
-        
+
         # 创建任务列表
         tasks = []
         for i, question in enumerate(questions):
             # 使用轮询方式分配 Agent
             agent = self.agents[i % self.pool_size]
             thread_id = f"{base_thread_id}_executor_{i}"
-            
+
             # 创建异步任务
-            task = agent.invoke(question, thread_id)
+            # 注意：直接调用 graph.ainvoke 而不是 agent.invoke，
+            # 以便正确初始化 executor_messages 包含初始查询消息
+            task = self._invoke_agent_with_message(agent, question, thread_id)
             tasks.append(task)
-            
+
             logger.debug(f"分配子问题 {i+1} 到 Agent {i % self.pool_size}")
-        
+
         # 并发执行所有任务，使用 return_exceptions=True 确保单个失败不影响其他
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # 处理结果
         valid_results = []
         failed_count = 0
-        
+
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"子问题 {i+1} 执行失败: {result}")
@@ -119,10 +122,48 @@ class ExecutorAgentPool:
             else:
                 valid_results.append(result)
                 logger.debug(f"子问题 {i+1} 执行成功")
-        
+
         logger.info(f"并发执行完成: 成功 {len(valid_results)}/{len(questions)}, 失败 {failed_count}")
-        
+
         return valid_results
+
+    async def _invoke_agent_with_message(self, agent: ExecutorAgent, question: str, thread_id: str) -> Dict:
+        """执行单个 ExecutorAgent，正确初始化 executor_messages
+
+        Args:
+            agent: ExecutorAgent 实例
+            question: 子问题（字符串）
+            thread_id: 线程 ID
+
+        Returns:
+            执行结果
+        """
+        # 确保异步资源已初始化
+        await agent._ensure_initialized()
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+        # 正确初始化 state：将 question 包装为 HumanMessage 放入 executor_messages
+        # 这样 _llm_decision_node 可以通过 state["executor_messages"][0].content 获取查询
+        initial_state = {
+            "executor_messages": [HumanMessage(content=question)],
+            "current_query": question,
+            "optional_search_results": [],
+            "search_results": [],
+            "reranked_results": [],
+            "downloaded_papers": [],
+            "executor_result": {}
+        }
+
+        try:
+            result = await agent.graph.ainvoke(initial_state, config)
+            logger.info(f"executor 完成子问题 '{question}' 的处理")
+            return result["executor_result"]
+        except Exception as e:
+            logger.error(f"executor 处理子问题 '{question}' 时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            raise e
     
     async def cleanup(self):
         """清理所有 Agent 资源"""

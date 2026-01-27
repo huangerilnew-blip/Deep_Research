@@ -1,0 +1,19 @@
+2026-01-25 15:51:46,264 - __main__ - INFO - 开始下载 5 篇论文，最大并发: 3
+2026-01-25 15:51:46,294 - __main__ - INFO - 文件已存在: A novel time–frequency Transformer based
+2026-01-25 15:51:48,060 - __main__ - INFO - 尝试下载 Swin-Transformer-Enabled YOLOv5 with Att，候选 URL: 1
+2026-01-25 15:51:48,060 - __main__ - DEBUG - 尝试 [1/1]: https://www.mdpi.com/2072-4292/14/12/2861/pdf?version=165528
+2026-01-25 15:51:48,062 - __main__ - INFO - 尝试下载 Transformer Architecture and Attention M，候选 URL: 1
+2026-01-25 15:51:48,062 - __main__ - DEBUG - 尝试 [1/1]: https://www.mdpi.com/2079-7737/12/7/1033/pdf?version=1690007
+2026-01-25 15:51:48,324 - __main__ - DEBUG - HTTP 状态码: 403, URL: https://www.mdpi.com/2079-7737/12/7/1033/pdf?version=1690007
+2026-01-25 15:51:48,411 - __main__ - DEBUG - HTTP 状态码: 403, URL: https://www.mdpi.com/2072-4292/14/12/2861/pdf?version=165528
+2026-01-25 15:51:48,654 - __main__ - INFO - 尝试下载 Attention Is All You Need，候选 URL: 1
+2026-01-25 15:51:48,654 - __main__ - DEBUG - 尝试 [1/1]: https://langtaosha.org.cn/index.php/lts/preprint/download/10
+2026-01-25 15:51:49,060 - __main__ - DEBUG - HTTP 状态码: 404, URL: https://langtaosha.org.cn/index.php/lts/preprint/download/10
+2026-01-25 15:51:49,083 - __main__ - DEBUG - HTTP 状态码: 403, URL: https://www.mdpi.com/2079-7737/12/7/1033/pdf?version=1690007
+2026-01-25 15:51:49,083 - __main__ - WARNING - 下载失败: Transformer Architecture and Attention M
+2026-01-25 15:51:49,492 - __main__ - DEBUG - HTTP 状态码: 403, URL: https://www.mdpi.com/2072-4292/14/12/2861/pdf?version=165528
+2026-01-25 15:51:49,493 - __main__ - WARNING - 下载失败: Swin-Transformer-Enabled YOLOv5 with Att
+2026-01-25 15:51:49,870 - __main__ - DEBUG - HTTP 状态码: 404, URL: https://langtaosha.org.cn/index.php/lts/preprint/download/10
+2026-01-25 15:51:49,871 - __main__ - WARNING - 下载失败: Attention Is All You Need
+2026-01-25 15:51:49,938 - __main__ - INFO - 尝试下载 Informer: Beyond Efficient Transformer f，候选 URL: 1
+2026-01-25 15:51:49,938 - __main__ - DEBUG - 尝试 [1/1]: https://ojs.aaai.org/index.php/AAAI/article/download/17325/1

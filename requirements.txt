@@ -67,6 +67,12 @@ httpx>=0.24.0
 # Tavily 搜索
 tavily-python>=0.3.0
 
+# MCP 适配器
+langchain-mcp-adapters>=0.1.0
+
+# 异步文件操作
+aiofiles>=23.0.0
+
 # Wikipedia 搜索
 wikipedia>=1.4.0
 
