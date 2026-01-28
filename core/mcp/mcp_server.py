@@ -13,13 +13,12 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 # 导入所有搜索器
-from tools.core_tools.openalex import OpenAlexSearcher
-from tools.core_tools.semantic_scholar import SemanticScholarSearcher
 from tools.core_tools.wikipedia_searcher import WikipediaSearcher
-from tools.core_tools.tavily import TavilySearcher
+from tools.core_tools.tavily import TavilySearch
 from tools.core_tools.sec_edgar import SECEdgarSearcher
 from tools.core_tools.akshare_searcher import AkShareSearcher
-from tools.core_tools.exa import ExaSearcher
+from tools.core_tools.exa_summary import ExaSearcherSummary
+from tools.core_tools.exa_context import ExaSearcherContext
 from tools.core_tools.paper import Paper
 
 # 创建 MCP Server 实例
@@ -27,10 +26,11 @@ app = Server("paper-search-server")
 
 # 初始化所有搜索器
 wiki_searcher = WikipediaSearcher()
-tavily_searcher = TavilySearcher()
+tavily_searcher = TavilySearch()
 sec_edgar_searcher = SECEdgarSearcher()
 akshare_searcher = AkShareSearcher()
-exa_searcher = ExaSearcher()
+exa_summary_searcher = ExaSearcherSummary()
+exa_context_searcher = ExaSearcherContext()
 
 
 def paper_to_dict(paper: Paper) -> Dict[str, Any]:
@@ -219,10 +219,10 @@ async def list_tools() -> List[Tool]:
             }
         ),
 
-        # Exa 工具
+        # Exa Summary 工具
         Tool(
-            name="exa_search_and_save",
-            description="使用 Exa 进行检索，并以精简的方式总结网页中的回答。",
+            name="exa_summary_search",
+            description="使用 Exa 进行网络搜索（Summary 模式）。针对 query 对搜索结果进行总结，返回的结果内容面窄但针对性强。适合快速获取核心信息。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -232,16 +232,80 @@ async def list_tools() -> List[Tool]:
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "返回结果数量限制，建议使用默认值10",
+                        "description": "返回结果数量限制",
                         "default": 10
                     },
                     "type": {
                         "type": "string",
-                        "description": "搜索类型（auto/fast/deep），建议默认值auto",
+                        "description": "搜索类型（auto/fast/deep）",
                         "default": "auto"
                     }
                 },
                 "required": ["query"]
+            }
+        ),
+        Tool(
+            name="exa_summary_download",
+            description="下载 Exa Summary 搜索结果为 Markdown 文件",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "papers": {
+                        "type": "array",
+                        "description": "Paper 对象列表（JSON 格式）",
+                        "items": {"type": "object"}
+                    },
+                    "save_path": {
+                        "type": "string",
+                        "description": "保存路径（可选）"
+                    }
+                },
+                "required": ["papers"]
+            }
+        ),
+
+        # Exa Context 工具
+        Tool(
+            name="exa_context_search",
+            description="使用 Exa 进行网络搜索（Context 模式）。返回清洗后的完整数据，内容面广。适合需要深入了解完整内容的场景。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回结果数量限制",
+                        "default": 10
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "搜索类型（auto/fast/deep）",
+                        "default": "auto"
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        Tool(
+            name="exa_context_download",
+            description="下载 Exa Context 搜索结果为 Markdown 文件",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "papers": {
+                        "type": "array",
+                        "description": "Paper 对象列表（JSON 格式）",
+                        "items": {"type": "object"}
+                    },
+                    "save_path": {
+                        "type": "string",
+                        "description": "保存路径（可选）"
+                    }
+                },
+                "required": ["papers"]
             }
         ),
     ]
@@ -253,55 +317,35 @@ async def handle_search(searcher, arguments: Dict) -> List[Dict]:
     query = arguments["query"]
     limit = arguments.get("limit", 10)
     language = arguments.get("language")  # 仅 Wikipedia 使用
-    
-    # 只有 WikipediaSearcher 支持 language 参数
+    search_type = arguments.get("type")  # Exa 使用
+
+    # WikipediaSearcher 是异步的，支持 language 参数
     if language and isinstance(searcher, WikipediaSearcher):
         papers = await searcher.search(query, limit, language)
+    # ExaSearcher 是同步的，支持 type 参数
+    elif search_type and (isinstance(searcher, ExaSearcherSummary) or isinstance(searcher, ExaSearcherContext)):
+        papers = searcher.search(query, limit, search_type)
+    # 其他搜索器（Tavily, SEC EDGAR, AkShare）都是同步的
     else:
-        papers = await searcher.search(query, limit)
-    
+        papers = searcher.search(query, limit)
+
     return [paper_to_dict(p) for p in papers]
 
 
 async def handle_download(searcher, arguments: Dict) -> List[Dict]:
-    """通用下载处理函数"""
+    """通用下载处理函数（兼容 save_dir 和 save_path 参数）"""
     papers_data = arguments["papers"]
-    save_path = arguments.get("save_path")
+    save_path = arguments.get("save_path") or arguments.get("save_dir")
 
     # 将字典转换回 Paper 对象
     papers = [Paper(**p) for p in papers_data]
-    downloaded = await searcher.download(papers, save_path) if save_path else await searcher.download(papers)
+    downloaded = searcher.download(papers, save_path) if save_path else searcher.download(papers)
 
     return [paper_to_dict(p) for p in downloaded]
 
 
-async def handle_exa_search_and_save(searcher, arguments: Dict):
-    """处理 Exa 搜索并保存"""
-    query = arguments["query"]
-    limit = arguments.get("limit", 10)
-    search_type = arguments.get("type", "auto")
-
-    # 调用 ExaSearcher 的 search_and_save 方法（使用默认保存路径）
-    results = searcher.search_and_save(
-        query=query,
-        num_results=limit,
-        type=search_type
-    )
-
-    # 返回简单的成功信息
-    return [TextContent(type="text", text=f"成功使用exa检索出{len(results.results)}个结果")]
-
-
 # 工具映射字典：工具名 -> (处理函数, 搜索器实例)
 TOOL_HANDLERS = {
-    # OpenAlex
-    "openalex_search": (handle_search, openalex_searcher),
-    "openalex_download": (handle_download, openalex_searcher),
-
-    # Semantic Scholar
-    "semantic_scholar_search": (handle_search, semantic_searcher),
-    "semantic_scholar_download": (handle_download, semantic_searcher),
-
     # Wikipedia
     "wikipedia_search": (handle_search, wiki_searcher),
     "wikipedia_download": (handle_download, wiki_searcher),
@@ -318,8 +362,13 @@ TOOL_HANDLERS = {
     "akshare_search": (handle_search, akshare_searcher),
     "akshare_download": (handle_download, akshare_searcher),
 
-    # Exa
-    "exa_search_and_save": (handle_exa_search_and_save, exa_searcher),
+    # Exa Summary
+    "exa_summary_search": (handle_search, exa_summary_searcher),
+    "exa_summary_download": (handle_download, exa_summary_searcher),
+
+    # Exa Context
+    "exa_context_search": (handle_search, exa_context_searcher),
+    "exa_context_download": (handle_download, exa_context_searcher),
 }
 
 

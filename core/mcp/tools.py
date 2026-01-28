@@ -144,20 +144,20 @@ async def get_tools(tool_type: str = "all") -> list[BaseTool]:
     # MCP Server工具 - Paper Search
     # 准备环境变量，确保所有必需的 key 都有值
     tavily_key = os.getenv("TAVILY_API_KEY")
-    semantic_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY") or os.getenv("SEMANTIC_API_KEY")
-    
+    exa_key = os.getenv("EXA_API_KEY")
+
     # 验证必需的 API Key
     if not tavily_key:
         raise ValueError(
             "TAVILY_API_KEY 未配置。请在 core/.env 文件中设置 TAVILY_API_KEY"
         )
-    
-    if not semantic_key:
+
+    if not exa_key:
         raise ValueError(
-            "SEMANTIC_SCHOLAR_API_KEY 未配置。请在 core/.env 文件中设置 SEMANTIC_API_KEY 或 SEMANTIC_SCHOLAR_API_KEY"
+            "EXA_API_KEY 未配置。请在 core/.env 文件中设置 EXA_API_KEY"
         )
-    
-    logger.info(f"环境变量验证通过: TAVILY_API_KEY 和 SEMANTIC_SCHOLAR_API_KEY 已配置")
+
+    logger.info(f"环境变量验证通过: TAVILY_API_KEY 和 EXA_API_KEY 已配置")
     
     client = MultiServerMCPClient({
         "paper-search": {
@@ -166,7 +166,7 @@ async def get_tools(tool_type: str = "all") -> list[BaseTool]:
             "cwd": os.path.dirname(os.path.dirname(__file__)),  # 项目根目录
             "env": {
                 "TAVILY_API_KEY": tavily_key,
-                "SEMANTIC_SCHOLAR_API_KEY": semantic_key
+                "EXA_API_KEY": exa_key
             },
             "transport": "stdio"
         }

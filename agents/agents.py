@@ -183,7 +183,7 @@ class ExecutorAgent:
     
     def _get_required_tools(self) -> List[str]:
         """获取必需调用的工具列表"""
-        return ["wikipedia_search", "openalex_search", "semantic_scholar_search", "tavily_search"]
+        return ["wikipedia_search", "exa_context_search", "tavily_search"]
     
     def _get_optional_tools(self) -> List[BaseTool]:
         """获取可选工具列表（由 LLM 决定是否调用）"""
